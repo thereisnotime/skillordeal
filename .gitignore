@@ -32,3 +32,6 @@ results/
 *.swp
 .DS_Store
 /examples/smoke/rounds/
+
+# Claude Code agent worktrees
+.claude/worktrees/
