@@ -1,0 +1,33 @@
+# Bout runner: pinned Node LTS + pinned Claude Code CLI + the few read-only tools audits need.
+# Build: just image   (versions come from build args so the lock records exactly what ran)
+ARG BASE_IMAGE=docker.io/library/node:24.21.0-trixie-slim@sha256:8ec5d7557396cfe32d21c3f9c13072355ceab22b584578ca4bb28af31120cffe
+FROM ${BASE_IMAGE}
+
+ARG CLI_VERSION=2.1.280
+ARG DEBIAN_SNAPSHOT=20260920T000000Z
+
+# Debian snapshot pins apt package versions to a point in time.
+RUN set -eux; \
+    sed -i -e "s|http://deb.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+           -e "s|http://deb.debian.org/debian\b|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+           /etc/apt/sources.list.d/debian.sources; \
+    apt-get -o Acquire::Check-Valid-Until=false update; \
+    apt-get install -y --no-install-recommends git ripgrep ca-certificates tini; \
+    rm -rf /var/lib/apt/lists/*
+
+RUN npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLI_VERSION}" \
+    && npm cache clean --force \
+    && claude --version
+
+# The node user (uid 1000) runs bouts; podman --userns=keep-id maps it to the host user.
+RUN mkdir -p /arena /ctx /cfg /home/runner && chown node:node /cfg /home/runner
+USER node
+ENV HOME=/home/runner \
+    CLAUDE_CONFIG_DIR=/cfg \
+    DISABLE_AUTOUPDATER=1 \
+    NO_COLOR=1
+WORKDIR /arena
+ENTRYPOINT ["/usr/bin/tini", "--"]
+LABEL org.opencontainers.image.title="skillordeal-runner" \
+      org.opencontainers.image.source="https://github.com/thereisnotime/skillordeal" \
+      io.skillordeal.cli-version="${CLI_VERSION}"

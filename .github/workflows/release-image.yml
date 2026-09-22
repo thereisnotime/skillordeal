@@ -1,0 +1,29 @@
+# Publish the runner image for a tagged engine release. Trials pin it by digest.
+name: release-image
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4
+      - run: just image
+      - uses: redhat-actions/podman-login@50c2d9a331bb67c8fdab99b86455fad05e2e3252 # v2.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: push
+        run: |
+          ref="ghcr.io/${GITHUB_REPOSITORY_OWNER}/skillordeal-runner:${GITHUB_REF_NAME}"
+          podman tag localhost/skillordeal-runner:dev "$ref"
+          podman push --digestfile digest.txt "$ref"
+          echo "pushed $ref@$(cat digest.txt)" >> "$GITHUB_STEP_SUMMARY"

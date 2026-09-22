@@ -1,0 +1,123 @@
+# Called from a trials repo: plan -> N shard jobs -> aggregate into a PR.
+# Every shard runs the same locked round; finished bouts are skipped, so re-runs resume.
+name: reusable-round
+
+on:
+  workflow_call:
+    inputs:
+      trial:
+        description: Path to trial.yaml in the calling repo
+        type: string
+        required: true
+      round:
+        type: string
+        required: true
+      shards:
+        type: number
+        default: 4
+      engine_ref:
+        description: skillordeal git tag or sha (must match the lock's engine version)
+        type: string
+        required: true
+      max_cost_usd:
+        description: Per-shard spend ceiling
+        type: number
+        default: 5
+      max_tokens:
+        description: Per-shard token ceiling (0 = none)
+        type: number
+        default: 0
+      jobs:
+        description: Parallel bouts inside one shard
+        type: number
+        default: 1
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}"
+      - id: plan
+        run: echo "matrix=$(skillordeal plan '${{ inputs.trial }}' -r '${{ inputs.round }}' --shards ${{ inputs.shards }})" >> "$GITHUB_OUTPUT"
+
+  run:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}"
+      - name: pull locked image
+        run: |
+          lock="$(dirname '${{ inputs.trial }}')/rounds/${{ inputs.round }}/lock.yaml"
+          ref=$(grep -A3 '^image:' "$lock" | awk '/ ref:/{print $2}')
+          digest=$(grep -A4 '^image:' "$lock" | awk '/ digest:/{print $2}')
+          podman pull "${ref%:*}@${digest}"
+          podman tag "${ref%:*}@${digest}" "$ref"
+      - name: run shard ${{ matrix.shard }}
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          extra=()
+          [[ "${{ inputs.max_tokens }}" != "0" ]] && extra+=(--max-tokens "${{ inputs.max_tokens }}")
+          skillordeal run '${{ inputs.trial }}' -r '${{ inputs.round }}' --shard '${{ matrix.shard }}' \
+            -j ${{ inputs.jobs }} --max-cost-usd ${{ inputs.max_cost_usd }} "${extra[@]}"
+      - name: shard name
+        if: always()
+        id: name
+        run: |
+          echo "name=bouts-$(echo '${{ matrix.shard }}' | tr / -)" >> "$GITHUB_OUTPUT"
+          echo "dir=$(dirname '${{ inputs.trial }}')/rounds/${{ inputs.round }}/bouts" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: ${{ steps.name.outputs.name }}
+          path: ${{ steps.name.outputs.dir }}
+          if-no-files-found: warn
+
+  aggregate:
+    needs: run
+    if: always()
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}[analysis]"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: bouts-*
+          path: _shards
+      - name: merge shards
+        run: |
+          dest="$(dirname '${{ inputs.trial }}')/rounds/${{ inputs.round }}/bouts"
+          mkdir -p "$dest"
+          for d in _shards/*/; do cp -r "$d"/. "$dest"/; done
+          rm -rf _shards
+          skillordeal status '${{ inputs.trial }}' -r '${{ inputs.round }}' >> "$GITHUB_STEP_SUMMARY"
+      - uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          branch: round/${{ inputs.round }}-${{ github.run_id }}
+          title: "Round ${{ inputs.round }} results for ${{ inputs.trial }}"
+          commit-message: "Add round ${{ inputs.round }} bouts from run ${{ github.run_id }}"
+          body: |
+            Bouts from workflow run ${{ github.run_id }}. See the step summary for the status table.

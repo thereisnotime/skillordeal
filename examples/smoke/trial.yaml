@@ -1,0 +1,23 @@
+# Smallest useful trial: baseline vs one skill on a tiny vulnerable app, one rep, Haiku.
+# just smoke   (or: skillordeal lock examples/smoke/trial.yaml -r smoke && skillordeal run ...)
+id: smoke
+title: Engine smoke test
+question: Does a single bout run isolated and produce a valid record?
+contenders_file: contenders.yaml
+contenders: [sentry-security-review]
+arenas_dir: arenas
+arenas: [dvpwa]
+tasks:
+  - id: security-audit
+    prompt_file: tasks/security-audit.md
+models:
+  - id: claude-haiku-4-5-20251001
+    max_budget_usd: 1.0
+reps: 1
+invocation: forced
+runtime:
+  auth:
+    mode: oauth
+    token_env: CLAUDE_CODE_OAUTH_TOKEN
+  limits:
+    timeout_s: 900

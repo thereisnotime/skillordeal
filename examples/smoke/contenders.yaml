@@ -1,0 +1,8 @@
+contenders:
+  - id: sentry-security-review
+    kind: skill
+    repo: https://github.com/getsentry/skills
+    ref: c2f99a5b04b4cd992ec3022d7c2c3e23e938d241
+    subpath: skills/security-review
+    license: Apache-2.0
+    role: finder

@@ -1,0 +1,54 @@
+[project]
+name = "skillordeal"
+version = "0.1.0"
+description = "Reproducible benchmark harness for LLM agent skills"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "typer>=0.27.2",
+    "pydantic>=2.13.5",
+    "ruamel.yaml>=0.19.1",
+    "jsonschema>=4.26.0",
+    "zstandard>=0.25.0",
+    "rich>=15.0.0",
+    "python-dotenv>=1.2.3",
+]
+
+[project.optional-dependencies]
+analysis = [
+    "duckdb>=1.5.5",
+    "pyarrow>=25.0.1",
+    "matplotlib>=3.11.2",
+    "numpy>=2.5.3",
+]
+
+[project.scripts]
+skillordeal = "skillordeal.cli:app"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.8",
+    "mypy>=2.3.1",
+]
+
+[build-system]
+requires = ["uv_build>=0.11.29,<0.12"]
+build-backend = "uv_build"
+
+[tool.ruff]
+line-length = 100
+target-version = "py314"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "SIM", "RUF"]
+# × is used on purpose in human-readable bout labels
+allowed-confusables = ["×"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["E501", "E731"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["podman: needs rootless podman", "live: calls the model API (costs money)"]
+addopts = "-m 'not podman and not live'"
