@@ -72,16 +72,16 @@ Written by `skillordeal score` and `skillordeal judge`. Everything here can be r
 |---|---|---|
 | `findings.jsonl` | one per finding | finding_id, finding_hash, bout_id, contender, arena, task, model, rep, category, severity, confidence, cwe, file (normalized), line_start, line_end (`line_start` when missing), title, description, evidence, recommendation, cluster_id |
 | `gt_matches.jsonl` | one per finding of an arena with ground truth | finding_id, finding_hash, verdict (`tp`/`dup`/`fp`/`unknown`), issue_id, match_basis (`cwe`/`category`), line_distance |
-| `judge.jsonl` | one per judged finding | finding_hash, finding_id, judge_model, verdict (`valid`/`invalid`/`duplicate`/`unverifiable`), confidence, rationale, cluster_id, prompt_sha, batch_id, judged_at |
+| `judge.jsonl` | one per judged finding | finding_hash, finding_id, judge_model, verdict (`valid`/`invalid`/`unverifiable`, validity only; overlap is left to clusters), confidence, rationale, cluster_id, prompt_sha, batch_id, judged_at |
 | `verdicts.jsonl` | one per finding | finding_id, finding_hash, bout_id, cluster_id, human, gt, judge, issue_id, verdict (`tp`/`fp`/`dup`/`unknown`), source (`human`/`gt`/`judge`) |
 | `bouts.csv` | one per bout | bout_id, contender, arena, task, model, rep, status, findings, cost_usd, tokens_total, input/output/cache tokens, duration_s, api_s, turns, skill_fired, first_turn_prompt_tokens, rss_peak_kb, threads_peak, fds_peak, cpu_s |
 | `unique.csv` | one per arena × contender | bouts, findings, clusters, exclusive_clusters (clusters no other contender found) |
-| `summary.parquet`, `summary.csv` | bouts.csv plus per-bout aggregates | tp, dup, fp, unknown, gt_issues, gt_complete, issues_found, precision, precision_lower_bound, recall, f1, f1_lower_bound, judge_valid/invalid/duplicate/unverifiable/pending, human_tp/fp/dup/unsure, final_tp/fp/dup/unknown, final_precision, clusters |
+| `summary.parquet`, `summary.csv` | bouts.csv plus per-bout aggregates | tp, dup, fp, unknown, gt_issues, gt_complete, issues_found, precision, precision_lower_bound, recall, f1, f1_lower_bound, judge_valid/invalid/unverifiable/pending, human_tp/fp/dup/unsure, final_tp/fp/dup/unknown, final_precision, clusters |
 | `judge_runs/<batch_id>/` | one per judge call | prompt.md, record.json (refs → finding_hash, usage, problems), transcript.jsonl.zst, stderr.log |
 
 Aggregates are blank for bouts that aren't `ok`.
 
-**Verdict precedence** when several sources exist: human, then ground truth, then judge. Only decisive answers count (`tp`/`fp`/`dup`, judge `valid`→tp, `invalid`→fp, `duplicate`→dup); `unsure`, `unknown` and `unverifiable` fall through to the next source.
+**Verdict precedence** when several sources exist: human, then ground truth, then judge. Only decisive answers count (`tp`/`fp`/`dup`, judge `valid`→tp, `invalid`→fp); `unsure`, `unknown` and `unverifiable` fall through to the next source.
 
 **Clusters** (`cluster_id`) group findings about the same problem across all bouts of an arena: same normalized file, lines overlapping within ±5 (or `score --window`), and a shared CWE when both cite one, else the same category. Clusters are connected components, and `cluster_id = "c-" + sha256("<arena>:<smallest member finding_hash>")[:16]`.
 

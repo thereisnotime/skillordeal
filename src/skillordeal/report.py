@@ -491,8 +491,9 @@ def render_markdown(ctx: Context, cells: list[Cell], rnd: Round, resamples: int,
         "## Reading the numbers",
         "",
         "- **TP / precision / recall / F1** come from `scores/` (human labels override ground "
-        "truth, which overrides the judge). Recall is only meaningful where the arena's ground "
-        "truth is marked complete.",
+        "truth, which overrides the judge). Recall is measured against the issues listed in "
+        "the arena's ground truth. Unless that list is marked complete, unmatched findings are "
+        "`unknown` rather than false positives, so precision is only a lower bound.",
         "- **Δ** columns are contender minus baseline in the same arena, task and model, with "
         "a CI from resampling both sides.",
         "- **cost per TP** is total cost of the ok bouts over their total TPs.",

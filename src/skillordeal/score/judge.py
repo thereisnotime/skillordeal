@@ -40,7 +40,9 @@ TOOLS = ["Read", "Grep", "Glob"]
 # The only finding fields the judge sees.
 BLIND_FIELDS = ("file", "line_start", "line_end", "category", "cwe", "title", "description")
 BLIND_TEXT = ("title", "description", "evidence")
-VERDICTS = {"valid", "invalid", "duplicate", "unverifiable"}
+# Validity only. A verdict must not depend on which other findings share the batch (the
+# cache is per finding), so overlap is left to clustering and ground-truth matching.
+VERDICTS = {"valid", "invalid", "unverifiable"}
 CONFIDENCES = {"high", "medium", "low"}
 DEFAULT_BATCH = 15
 REDACTED = "[redacted]"

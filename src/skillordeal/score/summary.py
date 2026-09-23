@@ -17,8 +17,8 @@ from skillordeal.score import ScoreError, write_csv
 # What each source's verdicts mean on the common tp/fp/dup scale. Missing = not decisive.
 HUMAN_MAP = {"tp": "tp", "fp": "fp", "dup": "dup"}
 GT_MAP = {"tp": "tp", "fp": "fp", "dup": "dup"}
-JUDGE_MAP = {"valid": "tp", "invalid": "fp", "duplicate": "dup"}
-JUDGE_VERDICTS = ("valid", "invalid", "duplicate", "unverifiable")
+JUDGE_MAP = {"valid": "tp", "invalid": "fp"}
+JUDGE_VERDICTS = ("valid", "invalid", "unverifiable")
 
 GT_COLUMNS = [
     "tp",
