@@ -31,13 +31,8 @@ def bout_id(
     c = lock["contenders"][contender]
     a = lock["arenas"][arena]
     t = lock["tasks"][task]
-    inputs = {
-        # run_hash covers only run-relevant config; locks written before it existed fall back.
-        "contender": c.get("run_hash")
-        or {k: c.get(k) for k in ("kind", "sha", "tree_hash", "config_hash")},
-        "arena": a.get("run_hash") or {k: a.get(k) for k in ("sha", "config_hash", "groundtruth")},
+    common = {
         "task": t,
-        "limits": lock["runtime"].get("limits"),
         "model": model,
         "image": lock["image"].get("id"),
         "cli": lock["image"].get("cli_version"),
@@ -46,6 +41,21 @@ def bout_id(
         "findings_schema": lock["findings_schema_sha256"],
         "rep": rep,
     }
+    if "run_hash" in c and "run_hash" in a:
+        # run_hash covers only run-relevant config, so editing notes or ground truth
+        # keeps finished bouts valid. Limits change outcomes, so they are part of the ID.
+        inputs = {
+            **common,
+            "contender": c["run_hash"],
+            "arena": a["run_hash"],
+            "limits": lock["runtime"].get("limits"),
+        }
+    else:  # locks written before run_hash existed keep their original IDs
+        inputs = {
+            **common,
+            "contender": {k: c.get(k) for k in ("kind", "sha", "tree_hash", "config_hash")},
+            "arena": {k: a.get(k) for k in ("sha", "config_hash", "groundtruth")},
+        }
     return "b-" + sha256_obj(inputs)[:16]
 
 

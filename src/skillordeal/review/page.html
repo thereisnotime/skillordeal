@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>skillordeal review</title>
+<link rel="icon" href="data:,">
+<style>
+:root {
+  color-scheme: light;
+  --paper: oklch(97.5% 0.008 85);
+  --paper-2: oklch(94.5% 0.012 85);
+  --paper-3: oklch(91% 0.014 85);
+  --ink: oklch(22% 0.015 60);
+  --ink-2: oklch(42% 0.015 60);
+  --ink-3: oklch(58% 0.012 60);
+  --rule: oklch(86% 0.014 80);
+  --accent: oklch(52% 0.17 35);
+  --accent-wash: oklch(93% 0.05 60);
+  --hl: oklch(92% 0.07 85);
+  --hl-edge: oklch(70% 0.14 70);
+  --tp: oklch(48% 0.13 150);
+  --fp: oklch(50% 0.17 28);
+  --dup: oklch(48% 0.09 250);
+  --unsure: oklch(58% 0.13 75);
+  --serif: "Iowan Old Style", "Charter", "Bitstream Charter", "Sitka Text", Cambria, Georgia, serif;
+  --sans: "Avenir Next", "Segoe UI Variable", "Segoe UI", "Noto Sans", Ubuntu, Cantarell, system-ui, sans-serif;
+  --mono: "JetBrains Mono", "Cascadia Code", "SF Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: oklch(19% 0.01 70);
+    --paper-2: oklch(23% 0.012 70);
+    --paper-3: oklch(28% 0.013 70);
+    --ink: oklch(92% 0.012 85);
+    --ink-2: oklch(76% 0.012 85);
+    --ink-3: oklch(60% 0.012 80);
+    --rule: oklch(33% 0.012 70);
+    --accent: oklch(70% 0.15 45);
+    --accent-wash: oklch(30% 0.05 50);
+    --hl: oklch(32% 0.06 80);
+    --hl-edge: oklch(72% 0.13 75);
+    --tp: oklch(72% 0.14 150);
+    --fp: oklch(70% 0.15 28);
+    --dup: oklch(72% 0.09 250);
+    --unsure: oklch(78% 0.13 80);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font: 15px/1.5 var(--sans);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+}
+button, select, input, textarea { font: inherit; color: inherit; }
+kbd {
+  font: 600 11px/1 var(--mono);
+  padding: 2px 5px 3px;
+  border: 1px solid var(--rule);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink-2);
+}
+
+/* masthead */
+header.mast {
+  display: flex; align-items: baseline; gap: 18px; flex-wrap: wrap;
+  padding: 14px clamp(16px, 3vw, 36px) 10px;
+  border-bottom: 1px solid var(--ink);
+}
+.mast h1 {
+  margin: 0; font: 600 21px/1.1 var(--serif); letter-spacing: -0.01em;
+}
+.mast h1 span { color: var(--accent); font-style: italic; }
+.mast .sub { color: var(--ink-2); font-size: 13px; }
+.mast .blind {
+  font: 600 11px/1 var(--sans); letter-spacing: 0.08em; text-transform: uppercase;
+  padding: 4px 7px; border: 1px solid currentColor; border-radius: 3px; color: var(--ink-2);
+}
+.progress { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.progress .count { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.progress .count b { color: var(--ink); font-weight: 600; }
+.bar { width: 160px; height: 6px; background: var(--paper-3); border-radius: 3px; overflow: hidden; }
+.bar i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .4s var(--ease); }
+
+/* filter row */
+nav.filters {
+  display: flex; gap: 10px; align-items: center; flex-wrap: wrap;
+  padding: 8px clamp(16px, 3vw, 36px);
+  border-bottom: 1px solid var(--rule);
+  background: var(--paper-2);
+  font-size: 13px;
+}
+nav.filters label { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); }
+nav.filters select, nav.filters input[type=search] {
+  background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 4px 8px;
+}
+nav.filters input[type=search] { width: min(260px, 60vw); }
+nav.filters .hint { margin-left: auto; color: var(--ink-3); display: flex; gap: 10px; flex-wrap: wrap; }
+
+/* two panes */
+main { display: grid; grid-template-columns: minmax(230px, 300px) 1fr; min-height: 0; }
+@media (max-width: 820px) { main { grid-template-columns: 1fr; } ol.queue { max-height: 30vh; } }
+ol.queue {
+  list-style: none; margin: 0; padding: 0; overflow-y: auto;
+  border-right: 1px solid var(--rule);
+}
+ol.queue li {
+  display: grid; grid-template-columns: 12px 1fr; gap: 8px; align-items: start;
+  padding: 8px 14px 8px 16px; cursor: pointer; border-bottom: 1px solid var(--rule);
+  font-size: 13px;
+}
+ol.queue li:hover { background: var(--paper-2); }
+ol.queue li[aria-current=true] { background: var(--accent-wash); }
+ol.queue .dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; border: 1.5px solid var(--ink-3); }
+ol.queue .dot.tp { background: var(--tp); border-color: var(--tp); }
+ol.queue .dot.fp { background: var(--fp); border-color: var(--fp); }
+ol.queue .dot.dup { background: var(--dup); border-color: var(--dup); }
+ol.queue .dot.unsure { background: var(--unsure); border-color: var(--unsure); }
+ol.queue .t { display: block; color: var(--ink); line-height: 1.3; }
+ol.queue .w { display: block; color: var(--ink-3); font: 11.5px/1.4 var(--mono); overflow-wrap: anywhere; }
+
+section.desk { overflow-y: auto; padding: clamp(18px, 3vw, 40px) clamp(16px, 4vw, 56px) 140px; }
+.empty { color: var(--ink-2); max-width: 46ch; font-size: 15px; }
+.empty h2 { font: 600 22px/1.2 var(--serif); color: var(--ink); }
+
+article.card { max-width: 980px; animation: rise .35s var(--ease); }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { article.card { animation: none; } .bar i { transition: none; } }
+.kicker { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: baseline; font-size: 12.5px; color: var(--ink-2); }
+.sev { font: 700 11px/1 var(--sans); letter-spacing: .09em; text-transform: uppercase; padding: 4px 7px; border-radius: 3px; }
+.sev.critical { background: var(--fp); color: var(--paper); }
+.sev.high { border: 1.5px solid var(--fp); color: var(--fp); }
+.sev.medium { border: 1.5px solid var(--unsure); color: var(--unsure); }
+.sev.low, .sev.info { border: 1px solid var(--ink-3); color: var(--ink-2); }
+.loc { font: 12.5px/1.4 var(--mono); color: var(--ink); overflow-wrap: anywhere; }
+h2.title { font: 600 clamp(22px, 2.4vw, 30px)/1.2 var(--serif); letter-spacing: -0.012em; margin: 10px 0 14px; max-width: 34em; }
+.badges { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+.badge { font-size: 12px; padding: 3px 9px 4px; border-radius: 999px; background: var(--paper-2); border: 1px solid var(--rule); color: var(--ink-2); }
+.badge b { color: var(--ink); font-weight: 600; }
+.badge.good b { color: var(--tp); } .badge.bad b { color: var(--fp); } .badge.meh b { color: var(--unsure); }
+.prose { display: grid; grid-template-columns: 1fr; gap: 16px; max-width: 72ch; }
+.prose h3 { font: 700 11px/1 var(--sans); letter-spacing: .1em; text-transform: uppercase; color: var(--ink-3); margin: 0 0 6px; }
+.prose p { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.prose .ev { font: 13px/1.5 var(--mono); white-space: pre-wrap; background: var(--paper-2); padding: 10px 12px; border-radius: 4px; overflow-x: auto; }
+.judge-note { font-size: 13px; color: var(--ink-2); margin-top: 6px; }
+
+figure.code { margin: 26px 0 0; border: 1px solid var(--rule); border-radius: 6px; overflow: hidden; background: var(--paper); }
+figure.code figcaption { display: flex; justify-content: space-between; gap: 12px; padding: 7px 12px; font: 12px/1.4 var(--mono); color: var(--ink-2); background: var(--paper-2); border-bottom: 1px solid var(--rule); }
+.code pre { margin: 0; padding: 6px 0; overflow-x: auto; font: 12.5px/1.6 var(--mono); tab-size: 4; }
+.code .ln { display: grid; grid-template-columns: 4.5em 1fr; }
+.code .ln span:first-child { text-align: right; padding-right: 14px; color: var(--ink-3); user-select: none; font-variant-numeric: tabular-nums; }
+.code .ln span:last-child { white-space: pre; padding-right: 16px; }
+.code .ln.hit { background: var(--hl); box-shadow: inset 3px 0 0 var(--hl-edge); }
+.code .ln.hit span:first-child { color: var(--ink); font-weight: 600; }
+.code .msg { padding: 14px; color: var(--ink-2); font: 13px/1.5 var(--sans); }
+
+/* verdict dock */
+.dock {
+  position: fixed; bottom: 0; right: 0; left: min(300px, 100vw);
+  display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center;
+  padding: 12px clamp(16px, 4vw, 56px);
+  background: color-mix(in oklab, var(--paper) 92%, transparent);
+  backdrop-filter: blur(6px);
+  border-top: 1px solid var(--ink);
+}
+@media (max-width: 820px) { .dock { left: 0; } }
+.verdicts { display: flex; gap: 6px; }
+.verdicts button {
+  display: inline-flex; align-items: center; gap: 8px; cursor: pointer;
+  padding: 7px 12px; border-radius: 5px; border: 1.5px solid var(--rule); background: var(--paper);
+  font-weight: 600; font-size: 14px; transition: transform .12s var(--ease), background .12s;
+}
+.verdicts button:active { transform: translateY(1px); }
+.verdicts button[data-v=tp] { color: var(--tp); } .verdicts button[data-v=fp] { color: var(--fp); }
+.verdicts button[data-v=dup] { color: var(--dup); } .verdicts button[data-v=unsure] { color: var(--unsure); }
+.verdicts button[aria-pressed=true] { border-color: currentColor; background: var(--paper-2); box-shadow: inset 0 0 0 1px currentColor; }
+.verdicts button kbd { color: inherit; }
+.dock select, .dock input { background: var(--paper); border: 1px solid var(--rule); border-radius: 4px; padding: 6px 8px; font-size: 13px; }
+.dock select { max-width: 300px; }
+.dock input.note { flex: 1 1 200px; min-width: 160px; }
+.dock .nav { display: flex; gap: 6px; margin-left: auto; }
+.dock .nav button { cursor: pointer; background: none; border: 1px solid var(--rule); border-radius: 4px; padding: 6px 10px; color: var(--ink-2); font-size: 13px; }
+.toast { position: fixed; top: 14px; left: 50%; transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 7px 14px; border-radius: 4px; font-size: 13px; opacity: 0; pointer-events: none; transition: opacity .2s; }
+.toast.on { opacity: 1; }
+.toast.err { background: var(--fp); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+</head>
+<body>
+<header class="mast">
+  <h1>skill<span>ordeal</span> review</h1>
+  <span class="sub" id="where">loading</span>
+  <span class="blind" id="blind" hidden>blind</span>
+  <div class="progress" aria-live="polite">
+    <span class="count" id="count"></span>
+    <div class="bar" role="progressbar" aria-label="labeled" id="barwrap"><i id="bar"></i></div>
+  </div>
+</header>
+<nav class="filters" aria-label="filters">
+  <label>arena <select id="f-arena"><option value="">all</option></select></label>
+  <label>category <select id="f-cat"><option value="">all</option></select></label>
+  <label>severity <select id="f-sev"><option value="">all</option></select></label>
+  <label><input type="checkbox" id="f-unl"> unlabeled only</label>
+  <input type="search" id="f-q" placeholder="search title, file, CWE" aria-label="search">
+  <span class="hint"><span><kbd>t</kbd> <kbd>f</kbd> <kbd>d</kbd> <kbd>u</kbd> verdict</span><span><kbd>j</kbd> <kbd>k</kbd> move</span><span><kbd>/</kbd> search</span></span>
+</nav>
+<main>
+  <ol class="queue" id="queue" aria-label="findings"></ol>
+  <section class="desk" id="desk"><div class="empty"><h2>Loading findings</h2></div></section>
+</main>
+<div class="dock" id="dock" hidden>
+  <div class="verdicts" role="group" aria-label="verdict">
+    <button data-v="tp" aria-pressed="false"><kbd>t</kbd>true positive</button>
+    <button data-v="fp" aria-pressed="false"><kbd>f</kbd>false positive</button>
+    <button data-v="dup" aria-pressed="false"><kbd>d</kbd>duplicate</button>
+    <button data-v="unsure" aria-pressed="false"><kbd>u</kbd>unsure</button>
+  </div>
+  <select id="issue" aria-label="ground-truth issue"><option value="">no issue link</option></select>
+  <input class="note" id="note" placeholder="note (optional)" aria-label="note">
+  <div class="nav"><button id="prev">&larr; <kbd>k</kbd></button><button id="next"><kbd>j</kbd> &rarr;</button></div>
+</div>
+<div class="toast" id="toast" role="status"></div>
+<script>
+(() => {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const qs = new URLSearchParams(location.search);
+  let token = qs.get("token") || "";
+  try {
+    if (token) sessionStorage.setItem("so-token", token); else token = sessionStorage.getItem("so-token") || "";
+  } catch (_) {}
+  if (qs.has("token")) history.replaceState(null, "", location.pathname);
+
+  const S = { meta: null, all: [], view: [], idx: 0, excerpts: new Map() };
+  const SEV = ["critical", "high", "medium", "low", "info"];
+
+  function el(tag, attrs, ...kids) {
+    const n = document.createElement(tag);
+    for (const [k, v] of Object.entries(attrs || {})) {
+      if (v === null || v === undefined || v === false) continue;
+      if (k === "class") n.className = v; else if (k === "text") n.textContent = v; else n.setAttribute(k, v);
+    }
+    for (const k of kids) if (k !== null && k !== undefined) n.append(k);
+    return n;
+  }
+  function toast(msg, err) {
+    const t = $("toast"); t.textContent = msg; t.className = "toast on" + (err ? " err" : "");
+    clearTimeout(toast.h); toast.h = setTimeout(() => (t.className = "toast"), err ? 4000 : 1400);
+  }
+  async function api(path, opts) {
+    const r = await fetch(path, { ...(opts || {}), headers: { "X-Review-Token": token, ...((opts || {}).headers || {}) } });
+    const body = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(body.error || r.statusText);
+    return body;
+  }
+
+  const verdictOf = (f) => (f.label ? f.label.verdict : null);
+
+  function fillSelect(sel, values) {
+    for (const v of values) sel.append(el("option", { value: v, text: v }));
+  }
+
+  function applyFilters(keepId) {
+    const a = $("f-arena").value, c = $("f-cat").value, s = $("f-sev").value;
+    const unl = $("f-unl").checked, q = $("f-q").value.trim().toLowerCase();
+    S.view = S.all.filter((f) =>
+      (!a || f.arena === a) && (!c || f.category === c) && (!s || f.severity === s) &&
+      (!unl || !f.label || f.finding_id === keepId) &&
+      (!q || [f.title, f.file, f.cwe, f.description].join(" ").toLowerCase().includes(q)));
+    const i = keepId ? S.view.findIndex((f) => f.finding_id === keepId) : -1;
+    S.idx = i >= 0 ? i : Math.min(S.idx, Math.max(0, S.view.length - 1));
+    renderQueue(); renderCard(); renderProgress();
+  }
+
+  function renderProgress() {
+    const hashes = new Map();
+    for (const f of S.all) hashes.set(f.finding_hash, !!f.label);
+    const done = [...hashes.values()].filter(Boolean).length, n = hashes.size;
+    $("count").innerHTML = "";
+    $("count").append(el("b", { text: String(done) }), ` / ${n} labeled`, S.view.length !== S.all.length ? ` · ${S.view.length} shown` : "");
+    $("bar").style.width = n ? (100 * done / n).toFixed(1) + "%" : "0";
+    $("barwrap").setAttribute("aria-valuenow", String(done)); $("barwrap").setAttribute("aria-valuemax", String(n));
+  }
+
+  function renderQueue() {
+    const q = $("queue"); q.replaceChildren();
+    S.view.forEach((f, i) => {
+      const li = el("li", { "aria-current": i === S.idx ? "true" : "false", "data-i": String(i) },
+        el("span", { class: "dot " + (verdictOf(f) || ""), title: verdictOf(f) || "unlabeled" }),
+        el("span", {}, el("span", { class: "t", text: f.title || "(untitled)" }),
+          el("span", { class: "w", text: `${f.file}:${f.line_start ?? "?"}` })));
+      li.addEventListener("click", () => go(i));
+      q.append(li);
+    });
+    const cur = q.querySelector("[aria-current=true]");
+    if (cur) cur.scrollIntoView({ block: "nearest" });
+  }
+
+  function badge(label, value, tone) {
+    return el("span", { class: "badge" + (tone ? " " + tone : "") }, label + " ", el("b", { text: value }));
+  }
+  const tone = (v) => ({ tp: "good", valid: "good", fp: "bad", invalid: "bad", dup: "meh", duplicate: "meh" })[v] || "";
+
+  function renderCard() {
+    const desk = $("desk");
+    const f = S.view[S.idx];
+    $("dock").hidden = !f;
+    if (!f) {
+      const all = S.all.length;
+      desk.replaceChildren(el("div", { class: "empty" },
+        el("h2", { text: all ? "Nothing matches these filters" : "No findings in this round" }),
+        el("p", { text: all ? "Clear a filter or untick “unlabeled only” to see the rest." :
+          "Run the round and `skillordeal score`, then reload this page." })));
+      return;
+    }
+    const lines = f.line_end && f.line_end !== f.line_start ? `${f.line_start}–${f.line_end}` : `${f.line_start ?? "?"}`;
+    const kicker = el("div", { class: "kicker" },
+      el("span", { class: "sev " + (f.severity || "info"), text: f.severity || "?" }),
+      el("span", { text: f.category || "" }),
+      f.cwe ? el("span", { text: f.cwe }) : null,
+      el("span", { class: "loc", text: `${f.arena} / ${f.file}:${lines}` }),
+      f.confidence ? el("span", { text: `confidence ${f.confidence}` }) : null,
+      f.contender ? el("span", { text: `by ${f.contender} #${f.rep ?? ""}` }) : null);
+    const badges = el("div", { class: "badges" });
+    if (f.gt) badges.append(badge("ground truth", f.gt.verdict + (f.gt.issue_id ? ` · ${f.gt.issue_id}` : ""), tone(f.gt.verdict)));
+    else badges.append(badge("ground truth", "not scored"));
+    for (const j of f.judge || []) badges.append(badge(`judge ${j.judge_model || ""}`.trim(), `${j.verdict}${j.confidence != null ? " (" + j.confidence + ")" : ""}`, tone(j.verdict)));
+    for (const o of f.other_labels || []) badges.append(badge(o.labeler, o.verdict, tone(o.verdict)));
+
+    const prose = el("div", { class: "prose" });
+    const block = (h, txt, cls) => txt ? prose.append(el("div", {}, el("h3", { text: h }), el("p", { class: cls, text: txt }))) : null;
+    block("Description", f.description);
+    block("Evidence", f.evidence, "ev");
+    block("Recommendation", f.recommendation);
+    const rat = (f.judge || []).map((j) => j.rationale).filter(Boolean);
+    if (rat.length) block("Judge rationale", rat.join("\n\n"));
+
+    const fig = el("figure", { class: "code" }, el("figcaption", {}, el("span", { text: f.file }), el("span", { text: `lines ${lines}` })),
+      el("div", { class: "msg", text: "loading excerpt…" }));
+    desk.replaceChildren(el("article", { class: "card" }, kicker, el("h2", { class: "title", text: f.title || "(untitled)" }), badges, prose, fig));
+    desk.scrollTop = 0;
+    loadExcerpt(f, fig);
+
+    for (const b of document.querySelectorAll(".verdicts button")) b.setAttribute("aria-pressed", String(verdictOf(f) === b.dataset.v));
+    const sel = $("issue"); sel.replaceChildren(el("option", { value: "", text: "no issue link" }));
+    const issues = (S.meta.issues || {})[f.arena] || [];
+    for (const i of issues) sel.append(el("option", { value: i.id, text: `${i.id} — ${i.title || ""}` }));
+    sel.hidden = !issues.length;
+    sel.value = (f.label && f.label.issue_id) || (f.gt && f.gt.issue_id) || "";
+    $("note").value = (f.label && f.label.note) || "";
+  }
+
+  async function loadExcerpt(f, fig) {
+    let x = S.excerpts.get(f.finding_id);
+    try {
+      if (!x) { x = await api("/api/excerpt?finding_id=" + encodeURIComponent(f.finding_id)); S.excerpts.set(f.finding_id, x); }
+    } catch (e) {
+      fig.lastChild.replaceWith(el("div", { class: "msg", text: "No excerpt: " + e.message }));
+      return;
+    }
+    if (S.view[S.idx] !== f) return;
+    const pre = el("pre", {});
+    for (const l of x.lines) {
+      const hit = l.n >= x.line_start && l.n <= x.line_end;
+      pre.append(el("div", { class: "ln" + (hit ? " hit" : "") }, el("span", { text: String(l.n) }), el("span", { text: l.text })));
+    }
+    fig.lastChild.replaceWith(x.out_of_range ? el("div", { class: "msg", text: `Cited line ${x.line_start} is past the end of the file (${x.total_lines} lines).` }) : pre);
+    const first = pre.querySelector(".hit");
+    if (first) pre.scrollTop = Math.max(0, first.offsetTop - 60);
+  }
+
+  function go(i) {
+    if (!S.view.length) return;
+    S.idx = Math.max(0, Math.min(S.view.length - 1, i));
+    renderQueue(); renderCard();
+  }
+
+  async function label(v) {
+    const f = S.view[S.idx];
+    if (!f) return;
+    const body = { finding_id: f.finding_id, verdict: v, issue_id: $("issue").value || null, note: $("note").value };
+    try {
+      const saved = await api("/api/labels", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+      for (const g of S.all) if (g.finding_hash === f.finding_hash) g.label = { verdict: saved.verdict, issue_id: saved.issue_id, note: saved.note, ts: saved.ts };
+      toast(`saved: ${v}`);
+      const nextId = (S.view[S.idx + 1] || f).finding_id;
+      applyFilters($("f-unl").checked ? null : f.finding_id);
+      if ($("f-unl").checked) { renderCard(); } else { const j = S.view.findIndex((g) => g.finding_id === nextId); go(j >= 0 ? j : S.idx); }
+    } catch (e) { toast("not saved: " + e.message, true); }
+  }
+
+  document.querySelectorAll(".verdicts button").forEach((b) => b.addEventListener("click", () => label(b.dataset.v)));
+  $("prev").addEventListener("click", () => go(S.idx - 1));
+  $("next").addEventListener("click", () => go(S.idx + 1));
+  for (const id of ["f-arena", "f-cat", "f-sev", "f-unl"]) $(id).addEventListener("change", () => applyFilters(null));
+  $("f-q").addEventListener("input", () => applyFilters(null));
+
+  document.addEventListener("keydown", (e) => {
+    const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName);
+    if (e.key === "Escape" && typing) { e.target.blur(); return; }
+    if (typing || e.metaKey || e.ctrlKey || e.altKey) return;
+    const map = { t: "tp", f: "fp", d: "dup", u: "unsure" };
+    if (map[e.key]) { e.preventDefault(); label(map[e.key]); }
+    else if (e.key === "j" || e.key === "ArrowDown") { e.preventDefault(); go(S.idx + 1); }
+    else if (e.key === "k" || e.key === "ArrowUp") { e.preventDefault(); go(S.idx - 1); }
+    else if (e.key === "/") { e.preventDefault(); $("f-q").focus(); }
+  });
+
+  (async () => {
+    try {
+      S.meta = await api("/api/meta");
+      S.all = await api("/api/findings");
+    } catch (e) {
+      $("desk").replaceChildren(el("div", { class: "empty" }, el("h2", { text: "Can't load the round" }),
+        el("p", { text: e.message + ". Open the exact URL the review command printed; it carries the session token." })));
+      $("where").textContent = "not connected";
+      return;
+    }
+    $("where").textContent = `${S.meta.trial || ""} · round ${S.meta.round} · ${S.meta.labeler}`;
+    $("blind").hidden = !S.meta.blind;
+    for (const w of S.meta.warnings || []) toast(w, true);
+    fillSelect($("f-arena"), S.meta.arenas);
+    fillSelect($("f-cat"), [...new Set(S.all.map((f) => f.category).filter(Boolean))].sort());
+    fillSelect($("f-sev"), SEV.filter((s) => S.all.some((f) => f.severity === s)));
+    applyFilters(null);
+  })();
+})();
+</script>
+</body>
+</html>
