@@ -192,11 +192,19 @@ def _stream(skills, findings, *, cost, tokens, structured=True):
         "duration_ms": 1000,
         "usage": {"input_tokens": tokens, "output_tokens": 10},
     }
-    if structured:
-        result["structured_output"] = {"summary": "s", "findings": findings}
-    else:
+    if not structured:
         result["result"] = "I could not produce JSON"
     return [json.dumps(e) + "\n" for e in (init, assistant, result)]
+
+
+def _write_output(launch, findings):
+    """Play the agent's part: write /out/findings.json into the mounted host dir."""
+    cmd = launch.create
+    mount = next(
+        cmd[i + 1] for i, a in enumerate(cmd) if a == "-v" and cmd[i + 1].endswith(":/out:rw")
+    )
+    host = Path(mount.split(":")[0])
+    (host / "findings.json").write_text(json.dumps({"summary": "s", "findings": findings}))
 
 
 class FakeRunner:
@@ -215,8 +223,11 @@ class FakeRunner:
             lines = _stream(
                 skills, [GOOD_FINDING], cost=0.2, tokens=200, structured=self.stage2 == "ok"
             )
+            if self.stage2 == "ok":
+                _write_output(launch, [GOOD_FINDING])
         else:
             lines = _stream(["ordeal:my-skill"], self.stage1, cost=0.1, tokens=100)
+            _write_output(launch, self.stage1)
         return ContainerRun(lines, "", 0, wall_s=1.5)
 
 

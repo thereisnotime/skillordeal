@@ -150,6 +150,8 @@ Each bout runs in a fresh rootless podman container with:
 - **The contender:** a read-only `--plugin-dir`. Plain skills and prompts are wrapped in a neutral `ordeal` plugin, so delivery is the same in every auth mode.
 - **Network:** an internal-only podman network. The one way out is a per-bout proxy sidecar that tunnels only to hosts in `runtime.network.allow` (default `api.anthropic.com`) on port 443. Every allowed and denied connection is counted in `record.json` under `egress`, so a skill that tries to phone home shows up there. Set `runtime.network.mode: open` only for debugging.
 - **Tools:** read-only by default (`Read, Grep, Glob, Bash(git log|show, ls, wc), Skill`). There are no write tools.
+- **Output:** the only writable path is `/out`. The agent writes its report to `/out/findings.json` (the prompt ends with engine-owned instructions and the schema) and the engine validates it. Structured output through the CLI was dropped for bouts because long nested reports sometimes came back mangled.
+- **Plugin hooks** that ship with a contender (for example Trail of Bits fp-check's Stop hooks, which demand its full method before the agent may finish) run as part of that contender. They count toward its cost and time.
 
 The **isolation gate** reads the CLI's `system/init` event. It marks the bout `invalid` (and excludes it from scoring) if any of these hold:
 

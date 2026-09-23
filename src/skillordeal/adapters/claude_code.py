@@ -18,6 +18,7 @@ from skillordeal.config import (
 )
 
 CTX = "/ctx"
+OUT = "/out"  # the only writable path a bout has; holds findings.json
 ARENA = "/arena"
 BOUT = "/bout"
 
@@ -44,11 +45,23 @@ def build_prompt(spec: BoutSpec, task_prompt: str) -> str:
     return task_prompt
 
 
-def build_command(spec: BoutSpec, findings_schema: dict[str, Any]) -> list[str]:
+def build_command(
+    spec: BoutSpec, schema: dict[str, Any] | None = None, *, output_file: bool = False
+) -> list[str]:
+    """Headless command for one run.
+
+    `schema` uses the CLI's structured output (fine for small outputs like judge verdicts).
+    `output_file` instead lets the agent write only `/out/findings.json`, which the engine
+    validates itself: long nested reports through structured output got mangled (the model
+    sometimes wrote the findings array as XML inside another field).
+    """
     tools = list(dict.fromkeys([*spec.task.tools, *spec.contender.extra_tools]))
     if spec.contender.kind == ContenderKind.baseline:
         tools = [t for t in tools if t != "Skill"]
     allowed = [t for t in tools if t != "Bash"] + spec.task.allowed_bash
+    if output_file:
+        tools = list(dict.fromkeys([*tools, "Write", "Edit"]))
+        allowed += [f"Write(/{OUT}/**)", f"Edit(/{OUT}/**)", f"Read(/{OUT}/**)"]
     settings = {
         "disableBundledSkills": True,
         "autoMemoryEnabled": False,
@@ -78,12 +91,14 @@ def build_command(spec: BoutSpec, findings_schema: dict[str, Any]) -> list[str]:
         ",".join(tools),
         "--allowedTools",
         ",".join(allowed),
-        "--json-schema",
-        json.dumps(findings_schema, separators=(",", ":")),
         "--max-budget-usd",
         f"{spec.budget_usd:.2f}",
         "--exclude-dynamic-system-prompt-sections",
     ]
+    if schema is not None:
+        cmd += ["--json-schema", json.dumps(schema, separators=(",", ":"))]
+    if output_file:
+        cmd += ["--add-dir", OUT]
     if spec.auth_mode == AuthMode.api_key:
         cmd.append("--bare")  # skips CLAUDE.md discovery, hooks, plugin sync, keychain, OAuth
     else:

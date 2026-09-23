@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import zstandard
+from jsonschema import Draft202012Validator
 
 from skillordeal import __version__, gitsrc
 from skillordeal.adapters import claude_code as cc
@@ -38,6 +39,8 @@ from skillordeal.secrets import Credentials, Scrubber
 from skillordeal.verify import render_verify_prompt, verify_template
 
 RECORD_VERSION = 1
+PROMPTS = Path(__file__).parent / "prompts"
+BUDGET_REASONS = {"budget_exhausted", "max_budget_exceeded"}
 # Outcomes that are results in their own right; `error` bouts get retried on resume.
 FINAL_STATUSES = {"ok", "invalid", "schema_violation", "limit_exceeded", "timeout"}
 
@@ -118,6 +121,33 @@ def prepare_arena(arena: Arena, sha: str, cache_dir: Path, dest: Path) -> dict[s
     ]
     files = sum(1 for p in dest.rglob("*") if p.is_file())
     return {"removed": sorted(set(removed)), "leftover_context": leftovers, "files": files}
+
+
+def output_instructions() -> str:
+    """Engine-owned tail of every bout prompt: where and how to write the report."""
+    schema = json.dumps(load_schema("findings"), indent=2)
+    return (PROMPTS / "output.md").read_text().replace("{schema}", schema)
+
+
+def read_findings(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Load and validate the agent's /out/findings.json. Returns (findings, problem)."""
+    if not path.exists():
+        return None, "no /out/findings.json written"
+    try:
+        data = json.loads(path.read_text())
+    except (json.JSONDecodeError, UnicodeDecodeError) as e:
+        return None, f"findings.json is not valid JSON: {e}"
+    errors = sorted(
+        Draft202012Validator(load_schema("findings")).iter_errors(data), key=lambda e: e.path
+    )
+    if errors:
+        e = errors[0]
+        where = "/".join(map(str, e.absolute_path)) or "root"
+        return (
+            None,
+            f"findings.json fails the schema at {where}: {e.message} ({len(errors)} errors)",
+        )
+    return data, None
 
 
 def render_prompt(template: str, arena: Arena) -> str:
@@ -377,9 +407,11 @@ def run_stage(
         builtin_skills=tuple(builtins.get("skills", [])),
         builtin_plugins=tuple(builtins.get("plugins", [])),
     )
-    prompt = cc.build_prompt(spec, task_prompt)
+    prompt = cc.build_prompt(spec, task_prompt + output_instructions())
     (out_dir / "prompt.md").write_text(prompt)
-    command = cc.build_command(spec, load_schema("findings"))
+    command = cc.build_command(spec, output_file=True)
+    out_host = env.work / f"out{tag}"
+    out_host.mkdir(parents=True)
     fields["command"] = [scrub(a) for a in command]
 
     # 4. run, behind the egress proxy (fake runners never touch podman, so no proxy for them)
@@ -391,7 +423,7 @@ def run_stage(
     try:
         create = podman_create_args(
             name, image_ref(rt), rt.limits, creds, env.arena_dir, ctx_dir, cfg_dir, command,
-            extra=egress.podman_args,
+            extra=[*egress.podman_args, "-v", f"{out_host}:{cc.OUT}:rw"],
         )  # fmt: skip
         run = env.runner(
             Launch(
@@ -423,7 +455,7 @@ def run_stage(
 
     ps = cc.parse_stream(scrubbed)
     usage = cc.usage_summary(ps.result)
-    findings = cc.structured_output(ps.result)
+    findings, output_problem = read_findings(out_host / "findings.json")
     fields.update(
         {
             "exit_code": run.exit_code,
@@ -465,24 +497,33 @@ def run_stage(
     problems = cc.isolation_problems(ps, spec)
     if problems:
         return StageResult("invalid", {**fields, "invalid_reasons": problems})
-    if usage.get("terminal_reason") == "structured_output_retry_exhausted":
-        # The agent kept answering in some other format (often the skill's own). That is a
-        # property of the contender, so it's a final result, not a retryable error.
-        (out_dir / "findings.json").write_text(
-            json.dumps({"raw_result": scrub(str((ps.result or {}).get("result")))}, indent=2)
-        )
+    if (
+        usage.get("terminal_reason") in BUDGET_REASONS
+        or usage.get("subtype") == "error_max_budget_usd"
+    ):
+        # --max-budget-usd hit: an outcome of how the contender works, not a retryable error.
         return StageResult(
-            "schema_violation",
-            {**fields, "findings_count": 0, "error": "structured output retries exhausted"},
+            "limit_exceeded", {**fields, "error": f"budget of ${spec.budget_usd:.2f} exhausted"}
         )
     if ps.result is None or usage.get("is_error"):
         reason = "; ".join(ps.api_errors) or usage.get("terminal_reason") or "no result event"
         return StageResult("error", {**fields, "error": f"agent error: {reason}"})
-    if not isinstance(findings, dict) or not isinstance(findings.get("findings"), list):
+    if findings is None:
+        raw = out_host / "findings.json"
         (out_dir / "findings.json").write_text(
-            json.dumps({"raw_result": scrub(str(ps.result.get("result")))}, indent=2)
+            json.dumps(
+                {
+                    "problem": output_problem,
+                    "raw_file": scrub(raw.read_text(errors="replace"))[:200_000]
+                    if raw.exists() else None,
+                    "raw_result": scrub(str(ps.result.get("result"))),
+                },
+                indent=2,
+            )
+        )  # fmt: skip
+        return StageResult(
+            "schema_violation", {**fields, "findings_count": 0, "error": output_problem}
         )
-        return StageResult("schema_violation", {**fields, "findings_count": 0})
     (out_dir / "findings.json").write_text(scrub(json.dumps(findings, indent=2)) + "\n")
     return StageResult("ok", {**fields, "findings_count": len(findings["findings"])}, findings)
 

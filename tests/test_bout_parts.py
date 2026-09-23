@@ -173,3 +173,42 @@ def test_monitor_parsers():
     stat = Path("/proc/self/stat").read_text()
     assert parse_proc_stat_ticks(stat) >= 0
     assert parse_proc_stat_ticks("1 (a b) S " + " ".join(["0"] * 10) + " 3 4 0") == 7
+
+
+def test_read_findings(tmp_path):
+    from skillordeal.bout import output_instructions, read_findings
+
+    f = tmp_path / "findings.json"
+    assert read_findings(f) == (None, "no /out/findings.json written")
+    f.write_text("{not json")
+    assert "not valid JSON" in read_findings(f)[1]
+    f.write_text(json.dumps({"summary": "s"}))
+    assert "fails the schema at root" in read_findings(f)[1]
+    good = {
+        "summary": "s",
+        "findings": [
+            {
+                "title": "t",
+                "category": "security",
+                "severity": "high",
+                "confidence": "high",
+                "file": "a.py",
+                "line_start": 3,
+                "description": "d",
+            }
+        ],
+    }
+    f.write_text(json.dumps(good))
+    assert read_findings(f) == (good, None)
+    text = output_instructions()
+    assert "/out/findings.json" in text and '"findings"' in text
+
+
+def test_file_output_command():
+    cmd = cc.build_command(spec(), output_file=True)
+    assert "--json-schema" not in cmd
+    assert cmd[cmd.index("--add-dir") + 1] == "/out"
+    tools = cmd[cmd.index("--tools") + 1].split(",")
+    assert "Write" in tools and "Edit" in tools
+    allowed = cmd[cmd.index("--allowedTools") + 1]
+    assert "Write(//out/**)" in allowed and "Write(" not in allowed.replace("Write(//out/**)", "")
