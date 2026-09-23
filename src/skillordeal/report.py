@@ -17,6 +17,7 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
+import subprocess
 import math
 from collections import Counter
 from dataclasses import dataclass, field
@@ -351,9 +352,20 @@ def _error_of(rnd: Round, bout_id: str) -> str:
     return str(rec.get("error") or "; ".join(map(str, reasons)) or "")
 
 
+def _repo_relative(path: Path) -> str:
+    """Path of the trial file relative to its git checkout (falls back to trials/<id>/)."""
+    proc = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"], cwd=path.parent, capture_output=True, text=True,
+        check=False,
+    )  # fmt: skip
+    if proc.returncode == 0:
+        return path.resolve().relative_to(Path(proc.stdout.strip()).resolve()).as_posix()
+    return f"trials/{path.parent.name}/{path.name}"
+
+
 def _repro(ctx: Context) -> str:
     eng = (ctx.lock.get("engine") or {}).get("version", "?")
-    trial = f"trials/{ctx.trial_file.parent.name}/trial.yaml"
+    trial = _repo_relative(ctx.trial_file)
     return "\n".join(
         [
             "```bash",

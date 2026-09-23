@@ -465,6 +465,16 @@ def run_stage(
     problems = cc.isolation_problems(ps, spec)
     if problems:
         return StageResult("invalid", {**fields, "invalid_reasons": problems})
+    if usage.get("terminal_reason") == "structured_output_retry_exhausted":
+        # The agent kept answering in some other format (often the skill's own). That is a
+        # property of the contender, so it's a final result, not a retryable error.
+        (out_dir / "findings.json").write_text(
+            json.dumps({"raw_result": scrub(str((ps.result or {}).get("result")))}, indent=2)
+        )
+        return StageResult(
+            "schema_violation",
+            {**fields, "findings_count": 0, "error": "structured output retries exhausted"},
+        )
     if ps.result is None or usage.get("is_error"):
         reason = "; ".join(ps.api_errors) or usage.get("terminal_reason") or "no result event"
         return StageResult("error", {**fields, "error": f"agent error: {reason}"})

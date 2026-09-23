@@ -106,7 +106,12 @@ def run(
     trial: TrialArg,
     rnd: RoundOpt,
     jobs: Annotated[
-        int, typer.Option("--jobs", "-j", help="Parallel bouts (1 = one after another)")
+        int,
+        typer.Option(
+            "--jobs",
+            "-j",
+            help="Parallel bouts; 1 = one after another, 0 = runtime.concurrency from the trial",
+        ),
     ] = 0,
     shard_spec: Annotated[str, typer.Option("--shard", help="i/N: run only this CI shard")] = "",
     contender: Annotated[list[str], typer.Option(help="Only these contenders")] = [],  # noqa: B006
