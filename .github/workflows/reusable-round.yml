@@ -32,6 +32,9 @@ on:
         type: number
         default: 1
     secrets:
+      ENGINE_READ_TOKEN:
+        description: Classic PAT with repo + read:packages, needed while the engine repo and image are private
+        required: false
       ANTHROPIC_API_KEY:
         required: false
       CLAUDE_CODE_OAUTH_TOKEN:
@@ -48,6 +51,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: engine access (private repo / image)
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [[ -n "$ENGINE_READ_TOKEN" ]]; then
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            echo "$ENGINE_READ_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          fi
       - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}"
       - id: plan
         run: echo "matrix=$(skillordeal plan '${{ inputs.trial }}' -r '${{ inputs.round }}' --shards ${{ inputs.shards }})" >> "$GITHUB_OUTPUT"
@@ -62,6 +73,14 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+      - name: engine access (private repo / image)
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [[ -n "$ENGINE_READ_TOKEN" ]]; then
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            echo "$ENGINE_READ_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          fi
       - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}"
       - name: pull locked image
         run: |
@@ -102,7 +121,15 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
-      - run: uv tool install "git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}[analysis]"
+      - name: engine access (private repo / image)
+        env:
+          ENGINE_READ_TOKEN: ${{ secrets.ENGINE_READ_TOKEN }}
+        run: |
+          if [[ -n "$ENGINE_READ_TOKEN" ]]; then
+            git config --global url."https://x-access-token:${ENGINE_READ_TOKEN}@github.com/".insteadOf "https://github.com/"
+            echo "$ENGINE_READ_TOKEN" | podman login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+          fi
+      - run: uv tool install "skillordeal[analysis] @ git+https://github.com/thereisnotime/skillordeal@${{ inputs.engine_ref }}"
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           pattern: bouts-*
