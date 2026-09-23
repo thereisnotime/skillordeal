@@ -117,6 +117,49 @@ rounds/<round>/bouts/<bout-id>/
 
 Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute.
 
+What happens after a round (scoring, labels, reports) is specified file by file in [docs/data-contracts.md](docs/data-contracts.md).
+
+## Review
+
+```bash
+uv run skillordeal review trials/…/trial.yaml -r r01 [--labeler NAME] [--port 8765] [--show-contenders]
+```
+
+Starts a local server on `127.0.0.1` and prints a URL with a one-time token. The page shows one finding at a time with its description, evidence and recommendation, the cited code (±15 lines, from the same stripped export the agent saw), and the ground-truth and judge verdicts from `scores/`. Keys: `t` true positive, `f` false positive, `d` duplicate, `u` unsure, `j`/`k` next/previous, `/` search. You can link a verdict to a ground-truth issue from the arena's `groundtruth.yaml`.
+
+Reviews are **blind by default**: contender, bout and rep are left out of what the page receives. Findings are ordered by file and line, so contenders are interleaved and likely duplicates sit next to each other.
+
+Each verdict is appended to `<trial>/labels/labels.jsonl`. Nothing is rewritten; a later line for the same `finding_hash` and labeler overrides an earlier one. If `scores/findings.jsonl` doesn't exist yet, findings are read straight from the bouts (with no gt/judge badges).
+
+## Report
+
+```bash
+uv sync --extra analysis
+uv run skillordeal report trials/…/trial.yaml -r r01 [--markdown-only]
+```
+
+Reads `scores/summary.parquet` (or `summary.csv`, or just `bouts.csv`) and writes into the round directory:
+
+- `RESULTS.md`: renders on GitHub. It has the trial question, lock hash, engine/CLI/image versions and models, then per arena × task × model tables. Each cell is the mean over ok bouts with a 95% bootstrap CI (fixed seed), and **n** (ok bouts over all bouts) sits next to it. It also shows Δ vs baseline, cost per TP, skill-fired rate and the forced-injection check. That check is first-turn prompt tokens minus the baseline's mean; zero or less gets flagged as "skill may not have loaded". Every contender row links its `bouts/<id>/` dirs, and every bout that didn't finish `ok` is listed with its reason. A "How to reproduce" snippet comes last.
+- `report.html`: one self-contained file, no network. Charts are inline SVG (quality vs cost with a Pareto frontier, cost/tokens, per-arena quality, client resources) and follow light/dark mode. Tables are sortable.
+- `results.csv` and `results.parquet`: the aggregated table, with means, CI bounds and deltas.
+
+## Triage
+
+```bash
+uv run skillordeal triage [--skills-list ~/Private/Projects/P/skills-collection/skills-list.json] \
+    [-k security -k "code review" ...] [--min-words 200] [--top 30] [--pin-synced] [--out candidates.yaml]
+```
+
+Shortlists contenders from a [skills-collection](https://github.com/thereisnotime/skills-collection) checkout without calling any model:
+
+1. Matches keywords against name and description. The default list is about security and code review.
+2. Drops SKILL.md files under `--min-words`.
+3. Folds near-duplicates. Skills whose SKILL.md is identical once the frontmatter, case and whitespace are ignored count as one, and the best-scoring copy is kept.
+4. Ranks with a score whose parts are written into each entry's notes: 3 per keyword hit, up to 3 for length, 2 for a `references/` dir, and log10(stars + 1) from `repos-meta.json`.
+
+The output is a `contenders:` YAML in the engine's schema. Entries use `repo` + `subpath` on GitHub; `ref` is left out so `lock` pins the default branch, or it's set to the synced commit with `--pin-synced`. Skills not on GitHub get a local `path`. Each entry also carries a static risk pre-scan: `scripts/` files, `curl`/`wget`/`nc`/`/dev/tcp`/`base64 -d`/`eval`, URLs to non-GitHub hosts, and prompt-injection phrases. Hits are tagged `[code]` or `[doc]` and summed up as none/low/medium/high. It's a grep, not a verdict, so read the skill before you trust it.
+
 ## Development
 
 ```bash
