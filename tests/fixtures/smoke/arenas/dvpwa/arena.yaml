@@ -1,0 +1,5 @@
+id: dvpwa
+repo: https://github.com/anxolerd/dvpwa
+ref: master
+language: python
+notes: Damn Vulnerable Python Web App (aiohttp). Tiny, deliberately vulnerable.

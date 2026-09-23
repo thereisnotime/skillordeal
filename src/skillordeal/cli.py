@@ -253,5 +253,9 @@ def show(bout_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False)]
             )
 
 
+from skillordeal import cli_score  # noqa: E402
+
+app.command()(cli_score.score)
+
 if __name__ == "__main__":
     app()

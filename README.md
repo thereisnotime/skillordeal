@@ -117,6 +117,21 @@ rounds/<round>/bouts/<bout-id>/
 
 Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute.
 
+## Scoring
+
+```bash
+uv run skillordeal score examples/smoke/trial.yaml -r smoke        # or: just score TRIAL ROUND
+```
+
+`score` reads every bout of a round and writes `rounds/<round>/scores/`. It makes no network calls and can be re-run at any time:
+
+- `findings.jsonl` has one row per finding of every `ok` bout, with a stable `finding_id` and `finding_hash`. `bouts.csv` has one row per bout whatever its status (tokens, cost, time, turns, RAM/threads/fds/CPU).
+- If the arena has a `groundtruth.yaml`, each finding is matched against it (`gt_matches.jsonl`), giving tp/dup/fp/unknown, precision, recall and f1 per bout. Unless the ground truth is marked `complete`, unmatched findings are `unknown` and only a lower bound on precision is reported.
+- Findings about the same problem are clustered across all bouts of an arena. `unique.csv` counts, per contender, the distinct problems it found and how many of those no other contender found.
+- `summary.parquet` / `summary.csv` merge it all with judge verdicts and human labels (`labels/labels.jsonl`). A human label beats ground truth, which beats the judge. The parquet file needs the `analysis` extra (`uv sync --extra analysis`).
+
+The exact rules and columns are in [docs/data-contracts.md](docs/data-contracts.md).
+
 ## Development
 
 ```bash
