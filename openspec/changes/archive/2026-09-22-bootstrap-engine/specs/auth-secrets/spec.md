@@ -4,7 +4,7 @@
 The engine SHALL support `api_key`, `oauth` and `credentials_file` auth modes, reading the token from a configured host env var name, optionally loaded from a configured env file.
 
 #### Scenario: Named OAuth token
-- **WHEN** runtime config sets `auth.mode: oauth` and `auth.token_env: TOC_CLAUDE_CODE_OAUTH_TOKEN`
+- **WHEN** runtime config sets `auth.mode: oauth` and `auth.token_env: WORK_CLAUDE_CODE_OAUTH_TOKEN`
 - **THEN** the container receives it as `CLAUDE_CODE_OAUTH_TOKEN`
 
 ### Requirement: Secrets never leak

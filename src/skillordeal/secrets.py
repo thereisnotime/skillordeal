@@ -46,7 +46,7 @@ def resolve_credentials(auth: AuthConfig, environ: dict[str, str] | None = None)
     """Find the secret for auth.mode.
 
     SKILLORDEAL_TOKEN_ENV / SKILLORDEAL_ENV_FILE override token_env / env_file, so a
-    personal setup (e.g. TOC_CLAUDE_CODE_OAUTH_TOKEN in ~/Private/Secret/xxRC/.env)
+    personal setup (e.g. WORK_CLAUDE_CODE_OAUTH_TOKEN in ~/.config/secrets/claude.env)
     never has to be written into a committed trial file.
     """
     env = dict(os.environ if environ is None else environ)

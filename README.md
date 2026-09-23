@@ -135,8 +135,8 @@ Secrets are only ever referenced by variable **name**. Values are handed to podm
 To use a personal token without writing it into a committed trial, override the source for one run:
 
 ```bash
-SKILLORDEAL_TOKEN_ENV=TOC_CLAUDE_CODE_OAUTH_TOKEN \
-SKILLORDEAL_ENV_FILE=~/Private/Secret/xxRC/.env \
+SKILLORDEAL_TOKEN_ENV=WORK_CLAUDE_CODE_OAUTH_TOKEN \
+SKILLORDEAL_ENV_FILE=~/.config/secrets/claude.env \
   uv run skillordeal run trials/…/trial.yaml -r r01
 ```
 
@@ -318,3 +318,7 @@ just verify        # lint + tests + gitleaks; run before pushing
 ```
 
 Specs and changes are tracked with [OpenSpec](https://openspec.dev) under `openspec/`.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE). Skills and target repos used in trials are only referenced by commit and keep their own licenses.

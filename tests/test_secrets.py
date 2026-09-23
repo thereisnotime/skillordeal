@@ -6,9 +6,9 @@ from skillordeal.secrets import REDACTED, AuthError, Scrubber, resolve_credentia
 
 def test_oauth_named_token_from_env_file(tmp_path):
     f = tmp_path / ".env"
-    f.write_text("TOC_CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdefghijklmnop\n")
+    f.write_text("WORK_CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-abcdefghijklmnop\n")
     c = resolve_credentials(
-        AuthConfig(mode="oauth", token_env="TOC_CLAUDE_CODE_OAUTH_TOKEN", env_file=str(f)),
+        AuthConfig(mode="oauth", token_env="WORK_CLAUDE_CODE_OAUTH_TOKEN", env_file=str(f)),
         environ={},
     )
     assert c.env == {"CLAUDE_CODE_OAUTH_TOKEN": "sk-ant-oat01-abcdefghijklmnop"}

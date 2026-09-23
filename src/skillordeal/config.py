@@ -53,7 +53,7 @@ class AuthConfig(Strict):
     mode: AuthMode = AuthMode.api_key
     # Name of the host env var holding the secret. Never the value itself.
     token_env: str | None = None
-    # Optional dotenv file loaded before reading token_env (e.g. ~/Private/Secret/xxRC/.env).
+    # Optional dotenv file loaded before reading token_env (e.g. ~/.config/secrets/claude.env).
     env_file: str | None = None
     # For credentials_file mode: a Claude Code .credentials.json copied into the bout's
     # throwaway config dir (the rest of ~/.claude is never mounted).
