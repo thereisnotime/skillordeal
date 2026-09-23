@@ -13,6 +13,9 @@ tasks:
 models:
   - id: claude-haiku-4-5-20251001
     max_budget_usd: 1.0
+judge:
+  id: claude-haiku-4-5-20251001
+  max_budget_usd: 1.0
 reps: 1
 invocation: forced
 runtime:

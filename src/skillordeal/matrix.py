@@ -32,9 +32,12 @@ def bout_id(
     a = lock["arenas"][arena]
     t = lock["tasks"][task]
     inputs = {
-        "contender": {k: c.get(k) for k in ("kind", "sha", "tree_hash", "config_hash")},
-        "arena": {k: a.get(k) for k in ("sha", "config_hash", "groundtruth")},
+        # run_hash covers only run-relevant config; locks written before it existed fall back.
+        "contender": c.get("run_hash")
+        or {k: c.get(k) for k in ("kind", "sha", "tree_hash", "config_hash")},
+        "arena": a.get("run_hash") or {k: a.get(k) for k in ("sha", "config_hash", "groundtruth")},
         "task": t,
+        "limits": lock["runtime"].get("limits"),
         "model": model,
         "image": lock["image"].get("id"),
         "cli": lock["image"].get("cli_version"),

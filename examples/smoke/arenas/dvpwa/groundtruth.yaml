@@ -1,0 +1,291 @@
+# Ground truth for dvpwa. Contract: skillordeal docs/data-contracts.md ("Ground truth").
+#
+# Every location below was checked by hand against the source at `sha`.
+# source: documented = listed in dvpwa's README.rst; manual = found reading the code.
+#
+# complete: false means a finding that matches nothing here scores `unknown`, not `fp`.
+# The judge and human labels decide those. Several issues sit within `window` lines of
+# each other (app.py, views.py index handler, fixtures), so a finding near a shared
+# spot can match the wrong issue; human labels override ground truth when that happens.
+arena: dvpwa
+sha: a1d8f89fac2e57093189853c6527c2b01fc1d9c1
+complete: false
+window: 5
+issues:
+  # --- documented in README.rst ------------------------------------------------
+
+  - id: dvpwa-sqli-student-create
+    title: SQL injection in student creation
+    category: security
+    cwe: [CWE-89]
+    severity: critical
+    locations:
+      - file: sqli/dao/student.py
+        lines: [41, 45]
+    source: documented
+    notes: >-
+      Student.create builds the INSERT with % string formatting and executes it with no
+      parameters. README payload: Robert'); DROP TABLE students CASCADE; --
+      Reached from POST /students/ (sqli/views.py 54-57), which has no auth check.
+
+  - id: dvpwa-xss-review-stored
+    title: Stored XSS in course reviews (Jinja2 autoescape disabled)
+    category: security
+    cwe: [CWE-79, CWE-80]
+    severity: high
+    locations:
+      - file: sqli/app.py
+        lines: [33, 35]
+      - file: sqli/templates/course.jinja2
+        lines: [22, 22]
+    source: documented
+    notes: >-
+      setup_jinja(..., autoescape=False) turns escaping off for every template. The README
+      example stores <script> in review_text via POST /courses/{id}/review, which then runs
+      for everyone who opens /courses/{id}. Reviews can be posted without logging in.
+
+  - id: dvpwa-session-fixation
+    title: Session identifier not rotated on login or logout
+    category: security
+    cwe: [CWE-384]
+    severity: high
+    locations:
+      - file: sqli/views.py
+        lines: [41, 43]
+      - file: sqli/views.py
+        lines: [156, 160]
+    source: documented
+    notes: >-
+      Login writes user_id into the existing session (no new_session / invalidate), and
+      logout only pops user_id. A pre-set AIOHTTP_SESSION cookie becomes authenticated once
+      the victim logs in, as described in the README.
+
+  - id: dvpwa-md5-password-hash
+    title: Passwords stored as unsalted MD5
+    category: security
+    cwe: [CWE-916, CWE-328, CWE-759, CWE-327, CWE-326]
+    severity: medium
+    locations:
+      - file: sqli/dao/user.py
+        lines: [40, 41]
+      - file: migrations/001-fixtures.sql
+        lines: [10, 13]
+    source: documented
+    notes: >-
+      check_password compares md5(password).hexdigest() with the stored hash; fixtures seed
+      md5() hashes. Fast, unsalted, identical passwords share a hash. The comparison is also
+      not constant-time, which is covered by the same fix.
+
+  - id: dvpwa-csrf-protection-disabled
+    title: CSRF middleware disabled, state-changing POSTs unprotected
+    category: security
+    cwe: [CWE-352]
+    severity: medium
+    locations:
+      - file: sqli/app.py
+        lines: [27, 27]
+      - file: sqli/middlewares.py
+        lines: [25, 38]
+    source: documented
+    notes: >-
+      csrf_middleware is commented out of the middleware list, so the _csrf_token fields in
+      the templates are never checked. Login, logout, student/course creation, reviews and
+      evaluations can all be forged cross-site. README lists CSRF (write-up "TBA").
+
+  # --- manual pass ---------------------------------------------------------------
+
+  - id: dvpwa-xss-student-name
+    title: Stored XSS via student name on list and evaluate pages
+    category: security
+    cwe: [CWE-79, CWE-80]
+    severity: high
+    locations:
+      - file: sqli/templates/students.jinja2
+        lines: [16, 16]
+      - file: sqli/templates/evaluate.jinja2
+        lines: [25, 25]
+    source: manual
+    notes: >-
+      With autoescape off, {{ name }} on /students/ and {{ student.name }} in the evaluate
+      error page render raw HTML. student.jinja2 and the evaluate breadcrumb use | e, these
+      two do not. Any name without a single quote (e.g. <img src=x onerror=...>) survives
+      the SQL string formatting and is stored.
+
+  - id: dvpwa-xss-course-fields
+    title: Stored XSS via course title and description
+    category: security
+    cwe: [CWE-79, CWE-80]
+    severity: medium
+    locations:
+      - file: sqli/templates/courses.jinja2
+        lines: [17, 18]
+      - file: sqli/templates/course.jinja2
+        lines: [9, 15]
+      - file: sqli/templates/student.jinja2
+        lines: [19, 20]
+      - file: sqli/templates/review.jinja2
+        lines: [32, 32]
+    source: manual
+    notes: >-
+      course.title and course.description are rendered unescaped on the course list, course
+      page, student page and review form (review.jinja2 line 10 escapes, line 32 does not).
+      Exploitable by anyone because course creation has no authorization check
+      (dvpwa-missing-authz-course-create).
+
+  - id: dvpwa-missing-authz-course-create
+    title: Course creation has no authentication or admin check
+    category: security
+    cwe: [CWE-862, CWE-285]
+    severity: high
+    locations:
+      - file: sqli/views.py
+        lines: [83, 90]
+    source: manual
+    notes: >-
+      The "Add new course" form is only shown to admins (courses.jinja2 line 25), but the
+      POST /courses/ handler never checks the session, so anonymous users can create courses.
+      The authorize(ensure_admin=True) decorator exists in sqli/utils/auth.py and is unused.
+
+  - id: dvpwa-missing-authz-evaluate
+    title: Grading endpoint has no authentication or admin check
+    category: security
+    cwe: [CWE-862, CWE-285]
+    severity: high
+    locations:
+      - file: sqli/views.py
+        lines: [134, 153]
+      - file: sqli/routes.py
+        lines: [21, 23]
+    source: manual
+    notes: >-
+      POST /students/{id}/evaluate/{course_id} writes marks for any student. The UI shows
+      the grading form only to admins (course.jinja2 line 41); the handler checks nothing.
+
+  - id: dvpwa-missing-authn-student-create
+    title: Student creation has no authentication check
+    category: security
+    cwe: [CWE-306, CWE-862]
+    severity: medium
+    locations:
+      - file: sqli/views.py
+        lines: [51, 57]
+    source: manual
+    notes: >-
+      The form is only rendered for logged-in users (students.jinja2 line 21), but POST
+      /students/ accepts anonymous requests. This makes the SQL injection pre-auth.
+
+  - id: dvpwa-session-cookie-flags
+    title: Session cookie set without HttpOnly or Secure
+    category: security
+    cwe: [CWE-1004, CWE-614]
+    severity: medium
+    locations:
+      - file: sqli/middlewares.py
+        lines: [20, 20]
+    source: manual
+    notes: >-
+      RedisStorage(app['redis'], httponly=False) overrides the aiohttp_session default, so
+      the AIOHTTP_SESSION cookie is readable from JavaScript (the XSS payloads can steal it).
+      secure and samesite are not set either.
+
+  - id: dvpwa-debug-mode
+    title: Application runs in debug mode with DEBUG logging
+    category: security
+    cwe: [CWE-489, CWE-215]
+    severity: low
+    locations:
+      - file: sqli/app.py
+        lines: [24, 24]
+      - file: run.py
+        lines: [11, 11]
+    source: manual
+    notes: Application(debug=True) is hardcoded and the entry point logs at DEBUG.
+
+  - id: dvpwa-error-page-info-leak
+    title: 5xx error page dumps exception internals
+    category: security
+    cwe: [CWE-209]
+    severity: low
+    locations:
+      - file: sqli/templates/errors/50x.jinja2
+        lines: [6, 6]
+    source: manual
+    notes: >-
+      <pre>{{ error.__dict__ }}</pre> prints the exception object's attributes (unescaped)
+      to the client on every 5xx, e.g. the Postgres error text after a failed injection.
+
+  - id: dvpwa-hardcoded-db-credentials
+    title: Database credentials hardcoded in committed config
+    category: security
+    cwe: [CWE-798, CWE-260]
+    severity: low
+    locations:
+      - file: config/dev.yaml
+        lines: [1, 6]
+    source: manual
+    notes: postgres/postgres superuser credentials in the default config file.
+
+  - id: dvpwa-default-admin-credentials
+    title: Seeded admin account with password equal to username
+    category: security
+    cwe: [CWE-1392, CWE-521]
+    severity: medium
+    locations:
+      - file: migrations/001-fixtures.sql
+        lines: [10, 10]
+    source: manual
+    notes: >-
+      superadmin / superadmin (is_admin TRUE) is created by the fixtures that the Postgres
+      image loads on first start. Shares a line range with dvpwa-md5-password-hash.
+
+  - id: dvpwa-postgres-exposed-no-password
+    title: Postgres published on the host with trust authentication
+    category: security
+    cwe: [CWE-306, CWE-1188]
+    severity: medium
+    locations:
+      - file: docker-compose.yml
+        lines: [8, 9]
+      - file: Dockerfile.db
+        lines: [1, 4]
+    source: manual
+    notes: >-
+      postgres:9.6.15 with no POSTGRES_PASSWORD falls back to "host all all all trust"
+      (pre-2020 image behaviour), and compose publishes 5432 on all interfaces. Anyone who
+      can reach the host gets a superuser connection without a password.
+
+  - id: dvpwa-unverified-download
+    title: Build downloads a script from a moving branch without verification
+    category: security
+    cwe: [CWE-494, CWE-829]
+    severity: low
+    locations:
+      - file: Dockerfile.app
+        lines: [3, 6]
+    source: manual
+    notes: wait-for is fetched from eficode/wait-for@master with no checksum and made executable.
+
+  - id: dvpwa-container-runs-as-root
+    title: Application container runs as root
+    category: security
+    cwe: [CWE-250]
+    severity: low
+    locations:
+      - file: Dockerfile.app
+        lines: [17, 20]
+    source: manual
+    notes: No USER instruction; the app process runs as root in the container.
+
+  - id: dvpwa-vulnerable-dependencies
+    title: Pinned dependencies with known vulnerabilities
+    category: security
+    cwe: [CWE-1395, CWE-1104]
+    severity: low
+    locations:
+      - file: requirements.txt
+        lines: [1, 18]
+    source: manual
+    notes: >-
+      aiohttp 3.5.3 (server-side request smuggling and parser issues fixed in later 3.x, e.g.
+      CVE-2023-37276), jinja2 2.10 (CVE-2019-10906, CVE-2024-22195), pyyaml 3.13
+      (CVE-2017-18342), all long unmaintained pins.

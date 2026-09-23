@@ -32,6 +32,10 @@ from skillordeal.yamlio import dump_yaml, load_yaml, sha256_obj, sha256_text
 
 LOCK_VERSION = 1
 WRAPPER_PLUGIN = "ordeal"
+# Config fields that change what a bout does. Others (notes, license, ground truth, role)
+# don't, so editing them keeps existing bout IDs valid.
+ARENA_RUN_FIELDS = {"repo", "language", "strip", "scope", "budget_usd"}
+CONTENDER_RUN_FIELDS = {"kind", "repo", "subpath", "path", "extra_tools", "strip"}
 
 
 class LockError(RuntimeError):
@@ -264,6 +268,8 @@ def _arena_facts(
         "ref": a.ref,
         "sha": sha,
         "config_hash": sha256_obj(a.model_dump(mode="json")),
+        # Only what changes the run itself; ground truth and notes are scoring/docs.
+        "run_hash": sha256_obj({"sha": sha, **a.model_dump(mode="json", include=ARENA_RUN_FIELDS)}),
         "groundtruth": gt,
     }
 
@@ -325,6 +331,14 @@ def build_lock(
             "config_hash": chash,
             **facts,
         }
+        contenders[c.id]["run_hash"] = sha256_obj(
+            {
+                "sha": sha,
+                "tree_hash": facts["tree_hash"],
+                "skill_name": facts.get("skill_name"),
+                **c.model_dump(mode="json", include=CONTENDER_RUN_FIELDS),
+            }
+        )
 
     arenas = {
         a.id: _arena_facts(

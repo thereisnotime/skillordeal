@@ -68,3 +68,21 @@ def test_drift_detects_prompt_edit(trial_dir):
     (trial_dir / "tasks" / "audit.md").write_text("different\n")
     problems = check_drift(lock, load_trial(trial_dir / "trial.yaml"), skip_image=True)
     assert "tasks.audit.prompt_sha256 changed" in problems
+
+
+def test_scoring_only_edits_keep_bout_ids(trial_dir):
+    lt = load_trial(trial_dir / "trial.yaml")
+    before = {k.bout_id for k in expand(build_lock(lt, skip_image=True))}
+    arena = trial_dir / "arenas" / "demo" / "arena.yaml"
+    arena.write_text(arena.read_text() + "notes: now with a note\n")
+    cf = trial_dir / "contenders.yaml"
+    cf.write_text(cf.read_text().replace("strip: ['*.cjs']}", "strip: ['*.cjs'], license: MIT}"))
+    after = {
+        k.bout_id for k in expand(build_lock(load_trial(trial_dir / "trial.yaml"), skip_image=True))
+    }
+    assert before == after
+    arena.write_text(arena.read_text().replace("strip: [dist/]", "strip: [dist/, app/]"))
+    changed = {
+        k.bout_id for k in expand(build_lock(load_trial(trial_dir / "trial.yaml"), skip_image=True))
+    }
+    assert changed != before

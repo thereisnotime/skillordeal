@@ -1,5 +1,6 @@
 id: dvpwa
 repo: https://github.com/anxolerd/dvpwa
-ref: master
+ref: a1d8f89fac2e57093189853c6527c2b01fc1d9c1
 language: python
-notes: Damn Vulnerable Python Web App (aiohttp). Tiny, deliberately vulnerable.
+groundtruth: groundtruth.yaml
+notes: Damn Vulnerable Python Web App (aiohttp). Tiny, deliberately vulnerable. Copy of the trials repo arena.
