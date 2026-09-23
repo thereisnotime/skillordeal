@@ -44,6 +44,8 @@ BOUT_COLUMNS = [
     "threads_peak",
     "fds_peak",
     "cpu_s",
+    "stages",  # pipeline bouts only: how many stages ran
+    "findings_before_verify",  # pipeline bouts only: stage 1's finding count
 ]
 # Text columns that must never be coerced back to numbers when bouts.csv is re-read.
 BOUT_STR_COLUMNS = ("bout_id", "contender", "arena", "task", "model", "status")
@@ -159,6 +161,7 @@ def bout_row(b: Bout) -> dict[str, Any]:
     usage = rec.get("usage") or {}
     tokens = usage.get("tokens") or {}
     res = rec.get("resources") or {}
+    stages = rec.get("stages") or []
 
     def secs(ms: Any) -> float | None:
         return round(ms / 1000, 3) if isinstance(ms, int | float) else None
@@ -187,6 +190,8 @@ def bout_row(b: Bout) -> dict[str, Any]:
         "threads_peak": res.get("threads_peak"),
         "fds_peak": res.get("fds_peak"),
         "cpu_s": res.get("cpu_usage_s"),
+        "stages": sum(1 for s in stages if s.get("status") != "skipped") if stages else None,
+        "findings_before_verify": rec.get("findings_before_verify"),
     }
 
 

@@ -149,6 +149,11 @@ class ContenderKind(StrEnum):
     skill = "skill"  # a directory with SKILL.md
     plugin = "plugin"  # a Claude Code plugin directory, loaded with --plugin-dir
     prompt = "prompt"  # a plain markdown prompt, wrapped into a SKILL.md
+    pipeline = "pipeline"  # other contenders run one after another; later stages verify
+
+
+# Fields a pipeline must leave alone: it has no source of its own, only its stages.
+PIPELINE_FORBIDDEN = ("repo", "ref", "path", "skill_name")
 
 
 class Contender(Strict):
@@ -169,9 +174,26 @@ class Contender(Strict):
     role: Literal["finder", "verifier", "context", "general-review"] = "finder"
     license: str | None = None
     notes: str = ""
+    # pipeline only: contender ids run in order. Stage 1 finds, each later stage verifies
+    # the previous stage's findings. `baseline` is a plain verifier pass with no skill.
+    stages: list[Slug] = []
 
     @model_validator(mode="after")
     def source(self) -> Contender:
+        if self.kind == ContenderKind.pipeline:
+            if len(self.stages) < 2:
+                raise ValueError(f"pipeline {self.id}: needs at least 2 stages")
+            if self.id in self.stages:
+                raise ValueError(f"pipeline {self.id}: a pipeline can't be its own stage")
+            bad = [f for f in PIPELINE_FORBIDDEN if getattr(self, f)]
+            bad += [f for f in ("subpath", "extra_tools", "strip") if getattr(self, f)]
+            if bad:
+                raise ValueError(
+                    f"pipeline {self.id}: {', '.join(bad)} belong on the stage contenders"
+                )
+            return self
+        if self.stages:
+            raise ValueError(f"contender {self.id}: only pipeline contenders have stages")
         if self.kind == ContenderKind.baseline:
             return self
         if bool(self.repo) == bool(self.path):
@@ -243,6 +265,34 @@ class LoadedTrial(BaseModel):
     arenas: list[Arena]
     arena_files: dict[str, Path]
     prompts: dict[str, str]
+    # Every contender a bout may need: the chosen ones plus the stages of chosen pipelines
+    # (which run inside pipeline bouts even when they aren't contenders on their own).
+    pool: dict[str, Contender] = {}
+
+    def contender(self, cid: str) -> Contender:
+        if cid == BASELINE.id:
+            return self.pool.get(cid, BASELINE)
+        return self.pool[cid]
+
+
+def check_pipelines(by_id: dict[str, Contender], source: Path | str) -> None:
+    """Stage ids must exist in the same file (or be `baseline`) and must not be pipelines.
+
+    No nesting also rules out cycles: a pipeline can only point at leaf contenders.
+    """
+    for c in by_id.values():
+        if c.kind != ContenderKind.pipeline:
+            continue
+        for sid in c.stages:
+            if sid == BASELINE.id and sid not in by_id:
+                continue
+            stage = by_id.get(sid)
+            if stage is None:
+                raise ValueError(f"pipeline {c.id}: unknown stage {sid!r} in {source}")
+            if stage.kind == ContenderKind.pipeline:
+                raise ValueError(
+                    f"pipeline {c.id}: stage {sid!r} is itself a pipeline; nesting isn't supported"
+                )
 
 
 def _read(path: Path) -> Any:
@@ -258,6 +308,7 @@ def load_trial(trial_file: Path) -> LoadedTrial:
     raw = _read(cfile).get("contenders", [])
     known = [Contender.model_validate(c) for c in raw]
     by_id = {c.id: c for c in known}
+    check_pipelines(by_id, cfile)
     if trial.contenders:
         missing = [i for i in trial.contenders if i not in by_id]
         if missing:
@@ -281,6 +332,11 @@ def load_trial(trial_file: Path) -> LoadedTrial:
         arenas.append(a)
         arena_files[aid] = f
 
+    pool = {c.id: c for c in chosen}
+    for c in chosen:
+        for sid in c.stages:
+            pool.setdefault(sid, by_id.get(sid, BASELINE))
+
     prompts = {t.id: (root / t.prompt_file).read_text() for t in trial.tasks}
     return LoadedTrial(
         trial=trial,
@@ -289,4 +345,5 @@ def load_trial(trial_file: Path) -> LoadedTrial:
         arenas=arenas,
         arena_files=arena_files,
         prompts=prompts,
+        pool=pool,
     )

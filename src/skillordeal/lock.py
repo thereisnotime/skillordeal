@@ -7,6 +7,7 @@ task prompt hashes and the findings schema hash.
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 import os
@@ -28,6 +29,7 @@ from skillordeal.config import (
 )
 from skillordeal.hashing import file_sha256, tree_hash
 from skillordeal.schemas import FINDINGS_SCHEMA_PATH
+from skillordeal.verify import verify_prompt_sha
 from skillordeal.yamlio import dump_yaml, load_yaml, sha256_obj, sha256_text
 
 LOCK_VERSION = 1
@@ -284,6 +286,83 @@ def _pin(pins: dict[str, Any] | None, section: str, key: str, config_hash: str) 
     return None
 
 
+def _contender_pins(pins: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Locked contender entries by id, including stages that only live inside a pipeline."""
+    if not pins:
+        return None
+    out: dict[str, Any] = {}
+    for cid, c in (pins.get("contenders") or {}).items():
+        for s in c.get("stage_locks") or []:
+            out.setdefault(s["id"], s)
+        out[cid] = c
+    return {"contenders": out}
+
+
+def _contender_entry(
+    c: Contender, pins: dict[str, Any] | None, cache_dir: Path, ctx_root: Path
+) -> dict[str, Any]:
+    chash = sha256_obj(c.model_dump(mode="json"))
+    sha = None
+    if c.repo:
+        sha = _pin(pins, "contenders", c.id, chash) or gitsrc.resolve(cache_dir, c.repo, c.ref)
+    local = None
+    if c.path:
+        local = _local_git_state(Path(c.path).expanduser())
+    facts = materialize(c, sha, cache_dir, ctx_root / c.id)
+    entry = {
+        "kind": c.kind.value,
+        "repo": c.repo,
+        "ref": c.ref,
+        "sha": sha,
+        "path": c.path,
+        "local_git": local,
+        "subpath": c.subpath,
+        "config_hash": chash,
+        **facts,
+    }
+    entry["run_hash"] = sha256_obj(
+        {
+            "sha": sha,
+            "tree_hash": facts["tree_hash"],
+            "skill_name": facts.get("skill_name"),
+            **c.model_dump(mode="json", include=CONTENDER_RUN_FIELDS),
+        }
+    )
+    return entry
+
+
+def _pipeline_entry(c: Contender, stages: list[dict[str, Any]]) -> dict[str, Any]:
+    """A pipeline carries a full copy of each stage's lock entry, so it runs from the lock alone.
+
+    Its sha/tree_hash/config_hash fold in the stages', so the ordinary drift check catches an
+    edited stage, and run_hash (hence the bout ID) moves when any stage or the verify prompt does.
+    """
+    vsha = verify_prompt_sha()
+    return {
+        "kind": c.kind.value,
+        "stages": list(c.stages),
+        # deep copies: shared objects would come out as YAML anchors
+        "stage_locks": [
+            {"id": sid, **copy.deepcopy(s)} for sid, s in zip(c.stages, stages, strict=True)
+        ],
+        "verify_prompt_sha256": vsha,
+        "sha": None,
+        "tree_hash": sha256_obj([s["tree_hash"] for s in stages]),
+        "config_hash": sha256_obj(
+            {"pipeline": c.model_dump(mode="json"), "stages": [s["config_hash"] for s in stages]}
+        ),
+        "skill_name": None,
+        "expected_skills": [],
+        "run_hash": sha256_obj(
+            {
+                "kind": c.kind.value,
+                "stages": [s["run_hash"] for s in stages],
+                "verify_prompt": vsha,
+            }
+        ),
+    }
+
+
 def build_lock(
     lt: LoadedTrial, *, skip_image: bool = False, pins: dict[str, Any] | None = None
 ) -> dict[str, Any]:
@@ -310,35 +389,20 @@ def build_lock(
             )
         image["builtins"] = probe_builtins(image_ref(rt), rt.auth.mode.value)
 
+    contender_pins = _contender_pins(pins)
+    leaves: dict[str, dict[str, Any]] = {}  # each leaf contender is materialized once
+
+    def leaf(c: Contender) -> dict[str, Any]:
+        if c.id not in leaves:
+            leaves[c.id] = _contender_entry(c, contender_pins, cache_dir, ctx_root)
+        return leaves[c.id]
+
     contenders: dict[str, Any] = {}
     for c in lt.contenders:
-        chash = sha256_obj(c.model_dump(mode="json"))
-        sha = None
-        if c.repo:
-            sha = _pin(pins, "contenders", c.id, chash) or gitsrc.resolve(cache_dir, c.repo, c.ref)
-        local = None
-        if c.path:
-            local = _local_git_state(Path(c.path).expanduser())
-        facts = materialize(c, sha, cache_dir, ctx_root / c.id)
-        contenders[c.id] = {
-            "kind": c.kind.value,
-            "repo": c.repo,
-            "ref": c.ref,
-            "sha": sha,
-            "path": c.path,
-            "local_git": local,
-            "subpath": c.subpath,
-            "config_hash": chash,
-            **facts,
-        }
-        contenders[c.id]["run_hash"] = sha256_obj(
-            {
-                "sha": sha,
-                "tree_hash": facts["tree_hash"],
-                "skill_name": facts.get("skill_name"),
-                **c.model_dump(mode="json", include=CONTENDER_RUN_FIELDS),
-            }
-        )
+        if c.kind == ContenderKind.pipeline:
+            contenders[c.id] = _pipeline_entry(c, [leaf(lt.contender(s)) for s in c.stages])
+        else:
+            contenders[c.id] = leaf(c)
 
     arenas = {
         a.id: _arena_facts(
@@ -423,7 +487,7 @@ def check_drift(lock: dict[str, Any], lt: LoadedTrial, *, skip_image: bool = Fal
         if fresh[key] != lock[key]:
             problems.append(f"{key} changed")
     for section, fields in (
-        ("contenders", ("sha", "tree_hash", "config_hash")),
+        ("contenders", ("sha", "tree_hash", "config_hash", "verify_prompt_sha256")),
         ("arenas", ("sha", "config_hash", "groundtruth")),
         ("tasks", ("prompt_sha256", "config_hash")),
     ):
