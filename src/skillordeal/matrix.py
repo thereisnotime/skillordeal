@@ -49,6 +49,7 @@ def bout_id(
             "contender": c["run_hash"],
             "arena": a["run_hash"],
             "limits": lock["runtime"].get("limits"),
+            "network": lock["runtime"].get("network"),
         }
     else:  # locks written before run_hash existed keep their original IDs
         inputs = {

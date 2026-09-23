@@ -19,6 +19,9 @@ RUN npm install -g --no-fund --no-audit "@anthropic-ai/claude-code@${CLI_VERSION
     && npm cache clean --force \
     && claude --version
 
+# Egress allowlist proxy (run as a sidecar container by the engine, see egress.py).
+COPY egress-proxy.mjs /opt/skillordeal/egress-proxy.mjs
+
 # The node user (uid 1000) runs bouts; podman --userns=keep-id maps it to the host user.
 RUN mkdir -p /arena /ctx /cfg /home/runner && chown node:node /cfg /home/runner
 USER node

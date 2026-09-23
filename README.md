@@ -64,6 +64,7 @@ Each bout runs in a fresh rootless podman container with:
 - **Claude Code flags:** `--restricted`, `--strict-mcp-config` with an empty MCP config, `--no-session-persistence`, and either `--bare` (API key) or `--setting-sources ""` (OAuth).
 - **The arena:** mounted read-only, with `.git` removed. `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`, `.cursor*` and the arena's own `strip:` globs are deleted at any depth.
 - **The contender:** a read-only `--plugin-dir`. Plain skills and prompts are wrapped in a neutral `ordeal` plugin, so delivery is the same in every auth mode.
+- **Network:** an internal-only podman network. The one way out is a per-bout proxy sidecar that tunnels only to `runtime.network.allow` (default `api.anthropic.com:443`). Every allowed and denied connection is counted in `record.json` under `egress`, so a skill that tries to phone home shows up there. Set `runtime.network.mode: open` only for debugging.
 - **Tools:** read-only by default (`Read, Grep, Glob, Bash(git log|show, ls, wc), Skill`). There are no write tools.
 
 The **isolation gate** reads the CLI's `system/init` event. It marks the bout `invalid` (and excludes it from scoring) if any of these hold:

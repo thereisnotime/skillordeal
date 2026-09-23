@@ -25,6 +25,7 @@ from skillordeal.config import (
     ModelSpec,
     Task,
 )
+from skillordeal.egress import Egress, EgressError
 from skillordeal.lock import image_ref, materialize
 from skillordeal.matrix import BoutKey
 from skillordeal.monitor import Monitor
@@ -138,6 +139,7 @@ def podman_create_args(
     ctx_dir: Path,
     cfg_dir: Path,
     command: list[str],
+    extra: list[str] | None = None,
 ) -> list[str]:
     args = [
         "podman",
@@ -187,6 +189,7 @@ def podman_create_args(
     ]
     if rt_limits.max_output_tokens:
         args += ["-e", f"CLAUDE_CODE_MAX_OUTPUT_TOKENS={rt_limits.max_output_tokens}"]
+    args += extra or []  # network / egress proxy settings
     for var in creds.env:  # by NAME only; value comes from the podman process env
         args += ["-e", var]
     return [*args, image, *command]
@@ -309,9 +312,29 @@ def run_bout(
 
     name = f"so-{key.bout_id}"
     _podman("rm", "-f", name)
+    egress = Egress(name, image_ref(rt), rt.network)
+    try:
+        egress.__enter__()
+    except EgressError as e:
+        return finish("error", error=str(e))
+    try:
+        return _run_container(
+            name, key, lt, rt, creds, scrub, spec, prompt, command, egress,
+            arena_dir, ctx_dir, cfg_dir, out_dir, record, finish,
+        )  # fmt: skip
+    finally:
+        egress.__exit__(None, None, None)
+
+
+def _run_container(
+    name: str, key: BoutKey, lt: LoadedTrial, rt: Any, creds: Credentials, scrub: Scrubber,
+    spec: cc.BoutSpec, prompt: str, command: list[str], egress: Egress, arena_dir: Path,
+    ctx_dir: Path, cfg_dir: Path, out_dir: Path, record: dict[str, Any], finish: Any,
+) -> dict[str, Any]:  # fmt: skip
     create = podman_create_args(
-        name, image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command
-    )
+        name, image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command,
+        extra=egress.podman_args,
+    )  # fmt: skip
     env = {**os.environ, **creds.env}
     proc = subprocess.run(create, capture_output=True, text=True, env=env, check=False)
     if proc.returncode != 0:
@@ -361,6 +384,8 @@ def run_bout(
     res_file.close()
     inspect = _podman("inspect", "--format", "{{.State.OOMKilled}}", name).stdout.strip()
     _podman("rm", "-f", name)
+    egress.__exit__(None, None, None)
+    record["egress"] = egress.summary()
 
     # 6. artifacts (scrubbed)
     scrubbed = [scrub(line) for line in transcript_lines]

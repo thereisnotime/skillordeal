@@ -89,12 +89,24 @@ class LimitsConfig(Strict):
     max_turns: int | None = 200  # assistant messages
 
 
+class NetworkMode(StrEnum):
+    allowlist = "allowlist"  # internal network + proxy that only reaches `allow` hosts
+    open = "open"  # default podman network, unrestricted (debugging only)
+
+
+class NetworkConfig(Strict):
+    mode: NetworkMode = NetworkMode.allowlist
+    allow: list[str] = ["api.anthropic.com"]
+    internal_network: str = "skillordeal-internal"
+
+
 class RuntimeConfig(Strict):
     cli_name: Literal["claude-code"] = "claude-code"
     cli_version: str = "2.1.280"
     image: ImageConfig = ImageConfig()
     auth: AuthConfig = AuthConfig()
     limits: LimitsConfig = LimitsConfig()
+    network: NetworkConfig = NetworkConfig()
     concurrency: int = 1
     sample_interval_s: float = 1.0
     work_dir: str = "work"

@@ -367,6 +367,7 @@ def build_lock(
             "cli_version": rt.cli_version,
             "auth_mode": rt.auth.mode.value,
             "limits": rt.limits.model_dump(mode="json"),
+            "network": rt.network.model_dump(mode="json"),
         },
         "models": [m.model_dump(mode="json") for m in lt.trial.models],
         "judge": lt.trial.judge.model_dump(mode="json") if lt.trial.judge else None,

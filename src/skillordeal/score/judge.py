@@ -29,6 +29,7 @@ import zstandard
 from skillordeal.adapters import claude_code as cc
 from skillordeal.bout import podman_create_args, prepare_arena
 from skillordeal.config import Arena, AuthMode, LoadedTrial, ModelSpec
+from skillordeal.egress import Egress
 from skillordeal.lock import WRAPPER_PLUGIN, image_ref
 from skillordeal.schemas import load as load_schema
 from skillordeal.score import ScoreError, write_jsonl
@@ -403,11 +404,16 @@ def _judge_batch(
         os.chmod(cfg_dir / ".credentials.json", 0o600)
 
     command = cc.build_command(spec, load_schema("verdicts"))
-    create = podman_create_args(
-        f"so-{b.batch_id}", image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command
-    )
+    name = f"so-{b.batch_id}"
+    # Fake runners in tests never touch podman, so the proxy only runs for the real one.
+    egress = Egress(name, image_ref(rt), rt.network, enabled=runner is podman_runner)
     (out / "prompt.md").write_text(b.prompt)
-    run = runner(create, {**os.environ, **creds.env}, b.prompt, rt.limits.timeout_s)
+    with egress:
+        create = podman_create_args(
+            name, image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command,
+            extra=egress.podman_args,
+        )  # fmt: skip
+        run = runner(create, {**os.environ, **creds.env}, b.prompt, rt.limits.timeout_s)
     lines = [scrub(line) for line in run.lines]
     cctx = zstandard.ZstdCompressor(level=12)
     (out / "transcript.jsonl.zst").write_bytes(cctx.compress("".join(lines).encode()))
@@ -442,6 +448,7 @@ def _judge_batch(
         "usage": usage,
         "verdicts": len(got),
         "problems": problems,
+        "egress": egress.summary(),
     }
     (out / "record.json").write_text(scrub(json.dumps(record, indent=2, default=str)) + "\n")
     return cost, got, problems
