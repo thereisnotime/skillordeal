@@ -17,8 +17,8 @@ from __future__ import annotations
 import csv
 import datetime as dt
 import json
-import subprocess
 import math
+import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
