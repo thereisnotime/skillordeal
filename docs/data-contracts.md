@@ -13,6 +13,29 @@ The bout's `findings.json` follows `src/skillordeal/schemas/findings.schema.json
 
 Only bouts with status `ok` contribute findings. Other statuses still get a `bouts.csv` row.
 
+## Pipeline bouts: `rounds/<round>/bouts/<bout-id>/`
+
+A bout of a `pipeline` contender has the usual files at the top level, so everything downstream reads it like any bout:
+
+| File | Content |
+|---|---|
+| `findings.json` | the **last stage's** output (so findings, `finding_id` and `finding_hash` come from the verifier) |
+| `prompt.md`, `transcript.jsonl.zst`, `stderr.log`, `resources.jsonl` | copies of stage 1's |
+| `record.json` | the bout record, with the fields below |
+| `stages/<n>-<contender>/` | one dir per stage that ran (`n` from 1): `prompt.md`, `findings.json`, `transcript.jsonl.zst`, `stderr.log`, `resources.jsonl`, `record.json` |
+
+The top-level `record.json` adds:
+
+- `contender.stages`: the stage contender ids, in order.
+- `stages`: one entry per stage, `{n, contender, status, findings_count, usage, resources, egress, skill_fired}` plus `error` / `invalid_reasons` when set. A stage that didn't run because stage 1 found nothing is `{n, contender, status: skipped, reason}`.
+- `findings_before_verify`: stage 1's finding count.
+- `failed_stage`: `{n, contender}` of the stage that ended the bout, when `status` isn't `ok`. The bout takes that stage's status, `error` and `invalid_reasons`.
+- `usage`: summed over the stages that ran (`total_cost_usd`, `tokens.*`, `duration_ms`, `duration_api_ms`, `num_turns`, `permission_denials`, `per_model.*`), plus `session_ids`. `tool_calls` and `egress.allowed`/`denied` are summed too.
+- `resources`: peaks (`rss_peak_kb`, `threads_peak`, `fds_peak`, `memory_peak_bytes`, `pids_peak`) are the max over stages; CPU and IO are summed. Per-process detail stays in each stage's record.
+- `init` and `first_turn_prompt_tokens` are stage 1's, which is the one comparable to a plain bout. `skill_fired` is true only when every stage with a skill fired it.
+
+A stage's own `record.json` has `stage`, `pipeline`, `contender` (the stage's), `status` and the same per-run fields as a plain bout record.
+
 ## Ground truth: `arenas/<arena>/groundtruth.yaml` (trials repo)
 
 ```yaml
@@ -74,7 +97,7 @@ Written by `skillordeal score` and `skillordeal judge`. Everything here can be r
 | `gt_matches.jsonl` | one per finding of an arena with ground truth | finding_id, finding_hash, verdict (`tp`/`dup`/`fp`/`unknown`), issue_id, match_basis (`cwe`/`category`), line_distance |
 | `judge.jsonl` | one per judged finding | finding_hash, finding_id, judge_model, verdict (`valid`/`invalid`/`unverifiable`, validity only; overlap is left to clusters), confidence, rationale, cluster_id, prompt_sha, batch_id, judged_at |
 | `verdicts.jsonl` | one per finding | finding_id, finding_hash, bout_id, cluster_id, human, gt, judge, issue_id, verdict (`tp`/`fp`/`dup`/`unknown`), source (`human`/`gt`/`judge`) |
-| `bouts.csv` | one per bout | bout_id, contender, arena, task, model, rep, status, findings, cost_usd, tokens_total, input/output/cache tokens, duration_s, api_s, turns, skill_fired, first_turn_prompt_tokens, rss_peak_kb, threads_peak, fds_peak, cpu_s |
+| `bouts.csv` | one per bout | bout_id, contender, arena, task, model, rep, status, findings, cost_usd, tokens_total, input/output/cache tokens, duration_s, api_s, turns, skill_fired, first_turn_prompt_tokens, rss_peak_kb, threads_peak, fds_peak, cpu_s, stages (pipeline bouts: stages that ran), findings_before_verify (pipeline bouts) |
 | `unique.csv` | one per arena × contender | bouts, findings, clusters, exclusive_clusters (clusters no other contender found) |
 | `summary.parquet`, `summary.csv` | bouts.csv plus per-bout aggregates | tp, dup, fp, unknown, gt_issues, gt_complete, issues_found, precision, precision_lower_bound, recall, f1, f1_lower_bound, judge_valid/invalid/unverifiable/pending, human_tp/fp/dup/unsure, final_tp/fp/dup/unknown, final_precision, clusters |
 | `judge_runs/<batch_id>/` | one per judge call | prompt.md, record.json (refs → finding_hash, usage, problems), transcript.jsonl.zst, stderr.log |

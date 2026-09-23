@@ -12,7 +12,7 @@ This repo is the **engine**. Studies, their locks, ground truth, human labels an
 |---|---|
 | **Trial** | One study: a question plus a fixed design (`trial.yaml`). Example: `2026-09-secure-coding-audit`. |
 | **Round** | One locked execution of a trial (`rounds/r01/lock.yaml`). Reproductions add new rounds. |
-| **Contender** | A skill under test, or `baseline` (no skill). Kinds: `skill`, `plugin`, `prompt`, `baseline`. |
+| **Contender** | A skill under test, or `baseline` (no skill). Kinds: `skill`, `plugin`, `prompt`, `baseline`, `pipeline`. |
 | **Arena** | A target repo pinned to a commit, optionally with ground truth. |
 | **Task** | A prompt template, e.g. `security-audit`. |
 | **Bout** | One run: contender × arena × task × model × rep. Its ID is a hash of its locked inputs. |
@@ -75,6 +75,35 @@ The **isolation gate** reads the CLI's `system/init` event. It marks the bout `i
 
 Skills and plugins that the CLI always loads (currently `design`, `doctor`, `telemetry`) are found by an offline probe at lock time and stored in the lock.
 
+## Pipelines
+
+A `pipeline` contender chains other contenders from the same contenders file: stage 1 does the task, and every later stage gets the previous stage's findings and verifies them. It measures "finder + independent verifier" against a single pass.
+
+```yaml
+contenders:
+  - id: sentry-security-review
+    kind: skill
+    repo: https://github.com/getsentry/skills
+    subpath: skills/security-review
+    role: finder
+  - id: tob-fp-check
+    kind: plugin                      # ships its own sub-agents, so load the whole plugin
+    repo: https://github.com/trailofbits/skills
+    subpath: plugins/fp-check
+    role: verifier
+  - id: sentry-then-fp-check
+    kind: pipeline
+    stages: [sentry-security-review, tob-fp-check]   # 2+ stages; `baseline` = plain verifier pass
+```
+
+With `contenders: [sentry-security-review, sentry-then-fp-check]` in `trial.yaml` you get the finder alone and the finder plus verifier, both against the baseline. A stage only used inside a pipeline (`tob-fp-check` here) is still locked, but gets no bouts of its own.
+
+- **Config:** a pipeline has only `stages` (plus `role`, `license`, `notes`); `repo`, `path`, `skill_name`, `strip` and `extra_tools` belong on the stages. Stage ids must exist in the same file or be `baseline`, and a stage can't be a pipeline itself, which also rules out cycles.
+- **Stages:** each one is a normal bout run in a fresh container with its own skill, config dir, egress proxy, monitor and limits (`runtime.limits` and the model budget apply **per stage**). The isolation gate checks every stage against that stage's expected skills. Stage 2+ gets `src/skillordeal/prompts/verify.md` with the previous findings as fenced JSON, blinded like the judge's input (contender, skill and bout names redacted). It keeps the ones it can confirm in the code, may fix file/lines, and answers in the same findings schema.
+- **Outcome:** the first stage that doesn't finish `ok` ends the bout with its status, and `failed_stage` says which. If stage 1 finds nothing, later stages are `skipped`.
+- **Lock:** the pipeline's entry carries a copy of each stage's lock entry. Its `run_hash` (and so its bout IDs) covers the stages' run hashes in order plus the verify prompt hash, so editing a stage or `verify.md` re-runs only the pipeline bouts.
+- **Record:** usage, cost, tokens, duration and turns are summed over stages, so `score` and `report` treat a pipeline like any contender. `findings_before_verify` is stage 1's count, and `bouts.csv` gets `stages` and `findings_before_verify` columns.
+
 ## Locking
 
 `skillordeal lock` writes `rounds/<round>/lock.yaml` with:
@@ -114,7 +143,11 @@ rounds/<round>/bouts/<bout-id>/
   resources.jsonl        1 s samples: per-process RSS/threads/fds/CPU + cgroup totals
   transcript.jsonl.zst   full stream-json, scrubbed
   stderr.log
+  stages/<n>-<contender>/  pipeline bouts only: the same files per stage (prompt.md, findings.json,
+                         transcript.jsonl.zst, stderr.log, resources.jsonl, record.json)
 ```
+
+For a pipeline bout the top-level `findings.json` is the last stage's output, and `prompt.md`, `transcript.jsonl.zst`, `stderr.log` and `resources.jsonl` are copies of stage 1's.
 
 Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute.
 
