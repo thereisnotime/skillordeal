@@ -15,7 +15,6 @@ import datetime as dt
 import json
 import os
 import random
-import re
 import shutil
 import subprocess
 import threading
@@ -27,10 +26,11 @@ from typing import Any
 import zstandard
 
 from skillordeal.adapters import claude_code as cc
-from skillordeal.bout import podman_create_args, prepare_arena
+from skillordeal.blind import Blinder, blind_terms
+from skillordeal.bout import ContainerRun, podman_create_args, prepare_arena
 from skillordeal.config import Arena, AuthMode, LoadedTrial, ModelSpec
 from skillordeal.egress import Egress
-from skillordeal.lock import WRAPPER_PLUGIN, image_ref
+from skillordeal.lock import image_ref
 from skillordeal.schemas import load as load_schema
 from skillordeal.score import ScoreError, write_jsonl
 from skillordeal.secrets import Credentials, Scrubber
@@ -46,8 +46,6 @@ BLIND_TEXT = ("title", "description", "evidence")
 VERDICTS = {"valid", "invalid", "unverifiable"}
 CONFIDENCES = {"high", "medium", "low"}
 DEFAULT_BATCH = 15
-REDACTED = "[redacted]"
-_IDS = re.compile(r"\bb-[0-9a-f]{16}(?::\d+)?\b")  # bout and finding ids
 
 
 def prompt_template() -> str:
@@ -70,34 +68,6 @@ def require_judge(lt: LoadedTrial) -> ModelSpec:
 
 
 # --- blinding ---------------------------------------------------------------------------
-
-
-def blind_terms(lock: dict[str, Any]) -> list[str]:
-    """Names that would give a contender away if a finding happened to mention them."""
-    terms: set[str] = set()
-    for cid, c in (lock.get("contenders") or {}).items():
-        if c.get("kind") == "baseline":
-            continue
-        terms.add(cid)
-        for name in (c.get("skill_name"), c.get("plugin_name")):
-            if name and name != WRAPPER_PLUGIN:
-                terms.add(name)
-                terms.add(name.split(":")[-1])
-        for s in c.get("expected_skills") or []:
-            terms.add(s.split(":")[-1])
-    return sorted((t for t in terms if len(t) >= 3), key=len, reverse=True)
-
-
-class Blinder:
-    def __init__(self, terms: list[str]):
-        pat = "|".join(re.escape(t) for t in terms)
-        self._terms = re.compile(rf"(?<![\w-])(?:{pat})(?![\w-])", re.I) if pat else None
-
-    def __call__(self, text: Any) -> Any:
-        if not isinstance(text, str):
-            return text
-        text = _IDS.sub(REDACTED, text)
-        return self._terms.sub(REDACTED, text) if self._terms else text
 
 
 def blinded(row: dict[str, Any], ref: str, blind: Blinder) -> dict[str, Any]:
@@ -200,14 +170,6 @@ class JudgeCache:
 
 
 # --- running ----------------------------------------------------------------------------------
-
-
-@dataclass
-class ContainerRun:
-    lines: list[str]
-    stderr: str
-    exit_code: int
-    timed_out: bool = False
 
 
 # (create args, env, prompt, timeout_s) -> ContainerRun. Swapped out in tests.
