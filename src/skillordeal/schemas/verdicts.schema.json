@@ -1,0 +1,22 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["verdicts"],
+  "properties": {
+    "verdicts": {
+      "type": "array",
+      "description": "Exactly one entry per finding you were given.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_ref", "verdict", "confidence", "rationale"],
+        "properties": {
+          "finding_ref": {"type": "string", "description": "The finding's ref, e.g. F3."},
+          "verdict": {"type": "string", "enum": ["valid", "invalid", "duplicate", "unverifiable"]},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "rationale": {"type": "string", "description": "One to three sentences citing the code you read."}
+        }
+      }
+    }
+  }
+}

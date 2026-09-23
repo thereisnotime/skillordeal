@@ -117,6 +117,36 @@ rounds/<round>/bouts/<bout-id>/
 
 Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute.
 
+## Scoring
+
+```bash
+uv run skillordeal score examples/smoke/trial.yaml -r smoke        # or: just score TRIAL ROUND
+```
+
+`score` reads every bout of a round and writes `rounds/<round>/scores/`. It makes no network calls and can be re-run at any time:
+
+- `findings.jsonl` has one row per finding of every `ok` bout, with a stable `finding_id` and `finding_hash`. `bouts.csv` has one row per bout whatever its status (tokens, cost, time, turns, RAM/threads/fds/CPU).
+- If the arena has a `groundtruth.yaml`, each finding is matched against it (`gt_matches.jsonl`), giving tp/dup/fp/unknown, precision, recall and f1 per bout. Unless the ground truth is marked `complete`, unmatched findings are `unknown` and only a lower bound on precision is reported.
+- Findings about the same problem are clustered across all bouts of an arena. `unique.csv` counts, per contender, the distinct problems it found and how many of those no other contender found.
+- `summary.parquet` / `summary.csv` merge it all with judge verdicts and human labels (`labels/labels.jsonl`). A human label beats ground truth, which beats the judge. The parquet file needs the `analysis` extra (`uv sync --extra analysis`).
+
+The exact rules and columns are in [docs/data-contracts.md](docs/data-contracts.md).
+
+## Judge
+
+```bash
+uv run skillordeal judge trials/…/trial.yaml -r r01 --dry-run      # print batches + prompts, free
+uv run skillordeal judge trials/…/trial.yaml -r r01 --max-cost-usd 3
+```
+
+Findings that ground truth can't decide go to an LLM judge, the model set as `judge:` in `trial.yaml`. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is in `src/skillordeal/prompts/judge.md`.
+
+- **Blinded:** the judge only sees file, lines, category, CWE, title, description and evidence. Contender and skill names and bout IDs are redacted from the text, and findings from all contenders are shuffled together (deterministically) in batches of `--batch-size` (default 15) per arena.
+- **Cached:** verdicts are stored per judge model, prompt hash and `finding_hash` under `~/.cache/skillordeal/judge/`, so a finding is judged once across all rounds, and a re-run only pays for what's new.
+- **Bounded:** `--max-cost-usd` stops judging once the spend reaches it, and each call's `--max-budget-usd` is capped to what's left. Each call leaves its prompt, record and scrubbed transcript under `scores/judge_runs/`.
+
+`judge` writes `scores/judge.jsonl` and then re-runs `score`.
+
 ## Development
 
 ```bash
