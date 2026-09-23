@@ -6,3 +6,13 @@ contenders:
     subpath: skills/security-review
     license: Apache-2.0
     role: finder
+  - id: tob-fp-check
+    kind: plugin
+    repo: https://github.com/trailofbits/skills
+    ref: 32e34f8173796e3566a51aee877dc96bc5191f64
+    subpath: plugins/fp-check
+    license: CC-BY-SA-4.0
+    role: verifier
+  - id: sentry-then-fp-check
+    kind: pipeline
+    stages: [sentry-security-review, tob-fp-check]

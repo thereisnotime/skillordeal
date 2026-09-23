@@ -4,7 +4,7 @@ id: smoke
 title: Engine smoke test
 question: Does a single bout run isolated and produce a valid record?
 contenders_file: contenders.yaml
-contenders: [sentry-security-review]
+contenders: [sentry-security-review, sentry-then-fp-check]
 arenas_dir: arenas
 arenas: [dvpwa]
 tasks:
