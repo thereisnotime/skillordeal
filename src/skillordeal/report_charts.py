@@ -268,6 +268,85 @@ def _frontier(pts: list[tuple[float, float]]) -> list[tuple[float, float]]:
     return sorted(set(front))
 
 
+# More points than this and the scatter switches to short keys plus a side key.
+KEYED_ABOVE = 7
+
+# Offsets (points) tried in order for a scatter label; leader lines mark the far ones.
+_LABEL_OFFSETS = [
+    (7, 6),
+    (7, -13),
+    (-7, 6),
+    (-7, -13),
+    (7, 18),
+    (7, -25),
+    (-7, 18),
+    (-7, -25),
+    (18, 30),
+    (18, -37),
+    (-18, 30),
+    (-18, -37),
+    (30, 0),
+    (-30, 0),
+    (30, 44),
+    (30, -51),
+]
+
+
+def _place_labels(fig: Any, ax: Any, labels: list[tuple[str, float, float, int]]) -> None:
+    """Greedy label placement: first offset whose box overlaps no label or marker so far.
+
+    Deterministic (fixed order, fixed candidates), so re-rendering gives the same SVG.
+    """
+    renderer = fig.canvas.get_renderer()
+    marker_boxes = []
+    for _, x, y, _side in labels:
+        px, py = ax.transData.transform((x, y))
+        marker_boxes.append((px - 6, py - 6, px + 6, py + 6))
+    placed: list[tuple[float, float, float, float]] = []
+    axes_box = ax.get_window_extent(renderer)
+
+    def overlap(b: tuple[float, float, float, float]) -> float:
+        """Overlapping area with placed labels and markers, plus a penalty outside the axes."""
+        area = 0.0
+        for o in placed + marker_boxes:
+            w = min(b[2], o[2]) - max(b[0], o[0])
+            h = min(b[3], o[3]) - max(b[1], o[1])
+            if w > 0 and h > 0:
+                area += w * h
+        out_w = max(0.0, axes_box.x0 - b[0]) + max(0.0, b[2] - axes_box.x1)
+        out_h = max(0.0, axes_box.y0 - b[1]) + max(0.0, b[3] - axes_box.y1)
+        return area + 1000.0 * (out_w + out_h)
+
+    for text, x, y, side in sorted(labels, key=lambda r: (-r[2], r[1], r[0])):
+        order = (
+            _LABEL_OFFSETS
+            if side == 0
+            else [_LABEL_OFFSETS[1], _LABEL_OFFSETS[0], *_LABEL_OFFSETS[2:]]
+        )
+        best: tuple[float, int, Any, tuple[float, float, float, float]] | None = None
+        for i, (dx, dy) in enumerate(order):
+            far = abs(dx) > 7 or abs(dy) > 13
+            ann = ax.annotate(
+                text, (x, y), textcoords="offset points", xytext=(dx, dy),
+                ha="left" if dx >= 0 else "right", fontsize=8.5, color=INK2,
+                arrowprops={"arrowstyle": "-", "color": INK2, "lw": 0.5, "alpha": 0.6}
+                if far else None,
+            )  # fmt: skip
+            bb = ann.get_window_extent(renderer)
+            box = (bb.x0, bb.y0, bb.x1, bb.y1)
+            score = overlap(box)
+            if best is None or score < best[0]:
+                if best is not None:
+                    best[2].remove()
+                best = (score, i, ann, box)
+            else:
+                ann.remove()
+            if score == 0:
+                break
+        assert best is not None
+        placed.append(best[3])
+
+
 def chart_quality_cost(
     arena: str, cells: list[Cell], multi: bool, seed: int, resamples: int
 ) -> ChartFile | None:
@@ -298,6 +377,7 @@ def chart_quality_cost(
         )
     side = {id(r[0]): i % 2 for i, r in enumerate(sorted(rows, key=lambda r: r[1].mean))}
     seen: set[str] = set()
+    labels: list[tuple[str, float, float, int]] = []
     for p, x, y in rows:
         base = p.contender == BASELINE
         color = MUTED if base else S1
@@ -329,20 +409,34 @@ def chart_quality_cost(
             f"{p.name(multi)}\n{q.label} {fmt_est(y, q.fmt)}\n"
             f"cost ${fmt_est(x, 'usd')} per bout\nn = {p.n_ok}/{p.n} bouts",
         )
-        ax.annotate(
-            p.name(multi),
-            (x.mean, y.mean),
-            textcoords="offset points",
-            xytext=(7, 6) if side[id(p)] == 0 else (7, -13),
-            fontsize=8.5,
-            color=INK2,
-        )
+        labels.append((p.name(multi), x.mean, y.mean, side[id(p)]))
     ax.set_xlabel("mean cost per bout, $ (lower is better)")
     ax.set_ylabel(f"mean {q.label} per bout (higher is better)")
     ax.set_title(f"{arena}: {q.label} against cost")
     ax.margins(x=0.25, y=0.2)
     ax.legend(loc="lower right", fontsize=8)
-    fig.tight_layout()
+    if len(labels) > KEYED_ABOVE:
+        # Crowded: short keys next to the dots, full names in a key beside the plot.
+        names = sorted({t for t, *_ in labels}, key=lambda t: (t != BASELINE, t))
+        keys = {t: ("B" if t == BASELINE else str(i)) for i, t in enumerate(names)}
+        labels = [(keys[t], x, y, side) for t, x, y, side in labels]
+        fig.set_size_inches(WIDTH + 2.6, fig.get_size_inches()[1])
+        fig.tight_layout(rect=(0, 0, WIDTH / (WIDTH + 2.6), 1))
+        key_text = "\n".join(f"{keys[t]:>2}  {t}" for t in names)
+        fig.text(
+            WIDTH / (WIDTH + 2.6) + 0.01,
+            0.93,
+            key_text,
+            va="top",
+            ha="left",
+            fontsize=8.5,
+            color=INK2,
+            family="monospace",
+            linespacing=1.5,
+        )
+    else:
+        fig.tight_layout()
+    _place_labels(fig, ax, labels)
     pts = [r[0] for r in rows]
     line = (
         f"the orange line joins contenders no one beats on both {q.label} and cost, "
