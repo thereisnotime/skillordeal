@@ -32,6 +32,7 @@ default:
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "run TRIAL ROUND [j=1]" "run a round (resumable, -j parallel bouts)"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "status TRIAL ROUND" "per-bout status, cost, tokens, RAM"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "score TRIAL ROUND" "findings, ground truth, dedup, summary (no network)"
+    printf "  {{GREEN}}%-28s{{RESET}} %s\n" "judge TRIAL ROUND" "blinded LLM judge on every finding (cached; --dry-run)"
     printf "\n{{BOLD}}{{MAGENTA}}INSPECT{{RESET}}\n"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "show BOUT_DIR"    "one bout's record summary and findings"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "transcript BOUT_DIR" "decompressed stream-json (pipe to jq)"
@@ -96,6 +97,10 @@ status trial round:
 # TRIALS: collect findings, match ground truth, cluster duplicates, write scores/
 score trial round *args:
     {{so}} score {{trial}} -r {{round}} {{args}}
+
+# TRIALS: blinded LLM judge (costs money unless --dry-run or cached)
+judge trial round *args:
+    {{so}} judge {{trial}} -r {{round}} {{args}}
 
 # INSPECT: summarize one bout
 show bout_dir:

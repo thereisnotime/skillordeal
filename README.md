@@ -132,6 +132,21 @@ uv run skillordeal score examples/smoke/trial.yaml -r smoke        # or: just sc
 
 The exact rules and columns are in [docs/data-contracts.md](docs/data-contracts.md).
 
+## Judge
+
+```bash
+uv run skillordeal judge trials/…/trial.yaml -r r01 --dry-run      # print batches + prompts, free
+uv run skillordeal judge trials/…/trial.yaml -r r01 --max-cost-usd 3
+```
+
+Findings that ground truth can't decide go to an LLM judge, the model set as `judge:` in `trial.yaml`. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is in `src/skillordeal/prompts/judge.md`.
+
+- **Blinded:** the judge only sees file, lines, category, CWE, title, description and evidence. Contender and skill names and bout IDs are redacted from the text, and findings from all contenders are shuffled together (deterministically) in batches of `--batch-size` (default 15) per arena.
+- **Cached:** verdicts are stored per judge model, prompt hash and `finding_hash` under `~/.cache/skillordeal/judge/`, so a finding is judged once across all rounds, and a re-run only pays for what's new.
+- **Bounded:** `--max-cost-usd` stops judging once the spend reaches it, and each call's `--max-budget-usd` is capped to what's left. Each call leaves its prompt, record and scrubbed transcript under `scores/judge_runs/`.
+
+`judge` writes `scores/judge.jsonl` and then re-runs `score`.
+
 ## Development
 
 ```bash
