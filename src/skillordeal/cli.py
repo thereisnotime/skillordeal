@@ -253,5 +253,12 @@ def show(bout_dir: Annotated[Path, typer.Argument(exists=True, file_okay=False)]
             )
 
 
+from skillordeal import cli_extra  # noqa: E402
+
+app.command()(cli_extra.review)
+app.command()(cli_extra.report)
+app.command()(cli_extra.triage)
+
+
 if __name__ == "__main__":
     app()

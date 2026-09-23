@@ -34,6 +34,10 @@ default:
     printf "\n{{BOLD}}{{MAGENTA}}INSPECT{{RESET}}\n"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "show BOUT_DIR"    "one bout's record summary and findings"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "transcript BOUT_DIR" "decompressed stream-json (pipe to jq)"
+    printf "\n{{BOLD}}{{MAGENTA}}RESULTS{{RESET}}\n"
+    printf "  {{GREEN}}%-28s{{RESET}} %s\n" "review TRIAL ROUND"  "label findings in a local, blind browser UI"
+    printf "  {{GREEN}}%-28s{{RESET}} %s\n" "report TRIAL ROUND"  "RESULTS.md, report.html, results.csv/parquet"
+    printf "  {{GREEN}}%-28s{{RESET}} %s\n" "triage [OUT]"        "shortlist skills-collection into contender YAML"
     printf "\n{{BOLD}}{{MAGENTA}}DEV{{RESET}}\n"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "smoke"            "lock + run the examples/smoke trial (costs cents)"
     printf "  {{GREEN}}%-28s{{RESET}} %s\n" "test"             "pytest (unit tests, no podman, no API)"
@@ -99,6 +103,18 @@ show bout_dir:
 # INSPECT: print a bout's transcript (pipe into jq)
 transcript bout_dir:
     {{so}} transcript {{bout_dir}}
+
+# RESULTS: label a round's findings in the browser (blind unless --show-contenders)
+review trial round *args:
+    {{so}} review {{trial}} -r {{round}} {{args}}
+
+# RESULTS: write RESULTS.md, report.html and exports for a scored round
+report trial round *args:
+    {{so}} report {{trial}} -r {{round}} {{args}}
+
+# RESULTS: shortlist security skills from skills-collection
+triage out="candidates.yaml" *args:
+    {{so}} triage --out {{out}} {{args}}
 
 # DEV: lock and run the smoke trial (one baseline + one skill bout on dvpwa)
 smoke *args:
