@@ -84,7 +84,7 @@ Written by the review UI, one JSON object per line. Later lines override earlier
 ```
 
 - `verdict`: `tp` | `fp` | `dup` | `unsure`
-- `issue_id` is optional and links the finding to a ground-truth issue. A `tp` with no `issue_id` is a candidate for promotion into ground truth (`skillordeal gt-promote`).
+- `issue_id` is optional and links the finding to a ground-truth issue. A `tp` with no `issue_id` is a candidate for promotion into ground truth, which is done by hand: add the issue to `groundtruth.yaml` with `source: human-label`.
 - Several labelers on one finding are combined by majority over `tp`/`fp`/`dup`; a tie counts as undecided.
 
 ## Scores: `rounds/<round>/scores/` (trials repo)

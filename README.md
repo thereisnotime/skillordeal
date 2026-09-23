@@ -1,10 +1,63 @@
 # skillordeal
 
-A reproducible benchmark harness for LLM agent skills (`SKILL.md` packs, Claude Code plugins, plain prompts). You give it a skill, a pinned codebase and a task, and it runs the agent with **nothing else** in context. It then records what came out: findings, tokens, cost, wall time, turns, and client-side RAM/CPU/threads/file handles.
+[![ci](https://github.com/thereisnotime/skillordeal/actions/workflows/ci.yml/badge.svg)](https://github.com/thereisnotime/skillordeal/actions/workflows/ci.yml)
+
+A reproducible benchmark harness for LLM agent skills (`SKILL.md` packs, Claude Code plugins, plain prompts): give it a skill, a pinned codebase and a task, and it runs the agent with nothing else in context and records what came out.
+
+- **Isolation:** every bout runs in a fresh rootless podman container with a read-only arena, no MCP servers, no host config, and network access only to `api.anthropic.com:443` through a per-bout proxy. An isolation gate throws out bouts that loaded anything unexpected.
+- **Locking:** image digest, CLI version, skill and arena commits, full model IDs and prompt hashes are pinned in a `lock.yaml`. `run` refuses to start on drift, and bout IDs are hashes of their inputs, so rounds resume.
+- **Resource metrics:** tokens, cost, turns and wall time per bout, plus 1 s samples of the client's RSS, threads, file handles and CPU.
+- **Four ways to score:** ground-truth matching, duplicate clustering across contenders, a blinded LLM judge, and blind human review in a local browser UI.
+- **Reports:** `RESULTS.md` with bootstrap CIs, deltas against the baseline and cost per true positive, a self-contained `report.html`, and CSV/parquet exports.
 
 It starts with Claude Code. Other agent CLIs can be added behind `src/skillordeal/adapters/`.
 
 This repo is the **engine**. Studies, their locks, ground truth, human labels and results live in [skillordeal-trials](https://github.com/thereisnotime/skillordeal-trials), which pins a released engine version.
+
+## Contents
+
+- [How it works](#how-it-works)
+- [Words used everywhere](#words-used-everywhere)
+- [Quick start](#quick-start)
+- [What a result looks like](#what-a-result-looks-like)
+- [Auth](#auth)
+- [What "zero context" means here](#what-zero-context-means-here)
+- [Pipelines](#pipelines)
+- [Locking](#locking)
+- [Limits](#limits)
+- [What a bout leaves behind](#what-a-bout-leaves-behind)
+- [Scoring](#scoring)
+- [Judge](#judge)
+- [Review](#review)
+- [Report](#report)
+- [Triage](#triage)
+- [Development](#development)
+
+## How it works
+
+```mermaid
+flowchart LR
+  C[contender] --> L
+  A[arena] --> L
+  T[task] --> L
+  M[model] --> L
+  L["lock<br/>lock.yaml"] --> B
+  subgraph B["bout (one per contender × arena × task × model × rep)"]
+    P["rootless podman<br/>read-only arena, no MCP"]
+    X["egress proxy<br/>api.anthropic.com:443 only"]
+    MON["host-side monitor<br/>cgroup v2 + /proc"]
+  end
+  B --> O["findings.json<br/>record.json"]
+  O --> S["score<br/>ground truth + clusters"]
+  O --> J["judge<br/>blinded LLM"]
+  O --> H["review<br/>human labels"]
+  S --> SUM["scores/summary<br/>human > ground truth > judge"]
+  J --> SUM
+  H --> SUM
+  SUM --> R["report<br/>RESULTS.md, report.html"]
+```
+
+Each box is one CLI command (`lock`, `run`, `score`, `judge`, `review`, `report`), and each step only talks to the next through files on disk, so any step can be re-run on its own. The files are specified in [docs/data-contracts.md](docs/data-contracts.md).
 
 ## Words used everywhere
 
@@ -19,24 +72,55 @@ This repo is the **engine**. Studies, their locks, ground truth, human labels an
 
 ## Quick start
 
+You need:
+
+- [asdf](https://asdf-vm.com), which installs the pinned `uv`, `nodejs`, `gitleaks` and `actionlint` from `.tool-versions`
+- [just](https://github.com/casey/just)
+- rootless podman on cgroup v2 (the resource monitor reads the container's cgroup)
+- [uv](https://docs.astral.sh/uv/), if you don't let asdf install it; it pulls Python 3.14 for the venv
+- a Claude credential (see [Auth](#auth))
+
 ```bash
-just setup           # asdf toolchain + uv venv
-just image           # build the pinned runner image with podman
-just doctor          # check podman/cgroup v2/image/auth
-just smoke           # baseline vs one skill on a tiny vulnerable app (costs ~$0.40 on Haiku)
+just setup           # asdf install + uv sync (venv in .venv)
+just image           # build the runner image locally with podman (localhost/skillordeal-runner:dev)
+just doctor          # check podman, cgroup v2, rootless, image, uv, auth env
+just smoke           # lock + run examples/smoke on Haiku: 3 bouts, about $0.65
 ```
 
-Everything is a plain shell command. `just` with no arguments shows the menu. The same steps without just:
+`just image` builds `container/Containerfile` locally from a pinned base image digest and installs the pinned Claude Code CLI version from npm. The smoke trial uses that local tag; `release-image.yml` publishes `ghcr.io/thereisnotime/skillordeal-runner:<tag>` for each `v*` tag, which real trials pin. `just` with no arguments shows the menu. Every recipe is one plain command, so the same steps without just are:
 
 ```bash
-uv run skillordeal validate examples/smoke/trial.yaml
-uv run skillordeal lock     examples/smoke/trial.yaml -r smoke
-uv run skillordeal plan     examples/smoke/trial.yaml -r smoke
-uv run skillordeal run      examples/smoke/trial.yaml -r smoke -j 2 --max-cost-usd 2
-uv run skillordeal status   examples/smoke/trial.yaml -r smoke
-uv run skillordeal show     examples/smoke/rounds/smoke/bouts/<bout-id>
+uv run skillordeal validate   examples/smoke/trial.yaml
+uv run skillordeal lock       examples/smoke/trial.yaml -r smoke
+uv run skillordeal plan       examples/smoke/trial.yaml -r smoke
+uv run skillordeal run        examples/smoke/trial.yaml -r smoke -j 2 --max-cost-usd 2
+uv run skillordeal status     examples/smoke/trial.yaml -r smoke
+uv run skillordeal show       examples/smoke/rounds/smoke/bouts/<bout-id>
 uv run skillordeal transcript examples/smoke/rounds/smoke/bouts/<bout-id> | jq .
 ```
+
+`-j` defaults to `runtime.concurrency` (1). Smoke round output lands in `examples/smoke/rounds/`, which is gitignored.
+
+## What a result looks like
+
+An excerpt of `examples/smoke/rounds/smoke/RESULTS.md` after `run`, `score`, `judge` and `report`. It's a 1-rep smoke test on Haiku, so it shows the plumbing works, not which skill is better.
+
+**Quality** (dvpwa · security-audit · `claude-haiku-4-5-20251001`)
+
+| contender | n | findings | TP | recall | judge-valid | bouts |
+|---|---|---:|---:|---:|---:|---|
+| baseline | 1/1 | 7 | 6 | 0.32 | 7 | #1 |
+| sentry-security-review | 1/1 | 6 | 6 | 0.32 | 6 | #1 |
+| sentry-then-fp-check | 1/1 | 6 | 6 | 0.32 | 6 | #1 |
+
+**Against baseline**
+
+| contender | Δ TP | Δ F1 | Δ cost $ | cost per TP $ | skill fired | first-turn tokens vs baseline | check |
+|---|---:|---:|---:|---:|---:|---:|---|
+| sentry-security-review | 0 | n/a | -0.028 | 0.022 | 100% (n=1) | +4,018 | ok |
+| sentry-then-fp-check | 0 | n/a | +0.177 | 0.056 | 100% (n=1) | +4,018 | ok |
+
+Δ F1 is `n/a` because dvpwa's ground truth isn't marked complete, so only a lower bound on precision exists. With one rep there are no confidence intervals. The full file also has a cost and resources table, the lock hash and versions, the bouts that didn't finish `ok`, and a reproduce snippet. See [Report](#report).
 
 ## Auth
 
@@ -60,14 +144,15 @@ SKILLORDEAL_ENV_FILE=~/Private/Secret/xxRC/.env \
 
 Each bout runs in a fresh rootless podman container with:
 
-- **Filesystem:** a read-only root filesystem, a tmpfs `HOME`, and a new empty `CLAUDE_CONFIG_DIR`. Auto-memory is off, and so are telemetry and auto-updates.
+- **Filesystem:** a read-only root filesystem, a tmpfs `HOME`, and a new empty `CLAUDE_CONFIG_DIR`. Auto-memory, telemetry and auto-updates are off.
 - **Claude Code flags:** `--restricted`, `--strict-mcp-config` with an empty MCP config, `--no-session-persistence`, and either `--bare` (API key) or `--setting-sources ""` (OAuth).
-- **The arena:** mounted read-only, with `.git` removed. `CLAUDE.md`, `AGENTS.md`, `.claude/`, `.mcp.json`, `.cursor*` and the arena's own `strip:` globs are deleted at any depth.
+- **The arena:** mounted read-only, with `.git` removed. Agent context files (`CLAUDE.md`, `CLAUDE.local.md`, `AGENTS.md`, `GEMINI.md`, `.claude/`, `.mcp.json`, `.cursorrules`, `.cursor/`, `.github/copilot-instructions.md`) and the arena's own `strip:` globs are deleted at any depth.
 - **The contender:** a read-only `--plugin-dir`. Plain skills and prompts are wrapped in a neutral `ordeal` plugin, so delivery is the same in every auth mode.
-- **Network:** an internal-only podman network. The one way out is a per-bout proxy sidecar that tunnels only to `runtime.network.allow` (default `api.anthropic.com:443`). Every allowed and denied connection is counted in `record.json` under `egress`, so a skill that tries to phone home shows up there. Set `runtime.network.mode: open` only for debugging.
+- **Network:** an internal-only podman network. The one way out is a per-bout proxy sidecar that tunnels only to hosts in `runtime.network.allow` (default `api.anthropic.com`) on port 443. Every allowed and denied connection is counted in `record.json` under `egress`, so a skill that tries to phone home shows up there. Set `runtime.network.mode: open` only for debugging.
 - **Tools:** read-only by default (`Read, Grep, Glob, Bash(git log|show, ls, wc), Skill`). There are no write tools.
 
 The **isolation gate** reads the CLI's `system/init` event. It marks the bout `invalid` (and excludes it from scoring) if any of these hold:
+
 - the loaded skills differ from what the contender should provide
 - any MCP server is present
 - a plugin appears that shouldn't
@@ -107,6 +192,7 @@ With `contenders: [sentry-security-review, sentry-then-fp-check]` in `trial.yaml
 ## Locking
 
 `skillordeal lock` writes `rounds/<round>/lock.yaml` with:
+
 - the engine version
 - the image ID and digest, and the CLI version inside the image
 - the built-in skills and plugins found by the probe
@@ -134,22 +220,21 @@ Round-wide ceilings: `run --max-cost-usd X --max-tokens N`.
 
 ## What a bout leaves behind
 
-```
+```text
 rounds/<round>/bouts/<bout-id>/
   record.json            versions, hashes, status, usage per model, cost, turns, tool calls,
-                         skill fired, first-turn prompt tokens, resource summary, limits
+                         skill fired, first-turn prompt tokens, resource summary, limits, egress
   findings.json          structured output (schemas/findings.schema.json)
   prompt.md              exact prompt sent
   resources.jsonl        1 s samples: per-process RSS/threads/fds/CPU + cgroup totals
   transcript.jsonl.zst   full stream-json, scrubbed
   stderr.log
-  stages/<n>-<contender>/  pipeline bouts only: the same files per stage (prompt.md, findings.json,
-                         transcript.jsonl.zst, stderr.log, resources.jsonl, record.json)
+  stages/<n>-<contender>/  pipeline bouts only: the same files per stage
 ```
 
 For a pipeline bout the top-level `findings.json` is the last stage's output, and `prompt.md`, `transcript.jsonl.zst`, `stderr.log` and `resources.jsonl` are copies of stage 1's.
 
-Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute.
+Resource numbers describe the **client harness** (the CLI, node, and the tools it spawns), not model-side compute. They're sampled from the host, so nothing inside the container can see or change them.
 
 ## Scoring
 
@@ -164,8 +249,6 @@ uv run skillordeal score examples/smoke/trial.yaml -r smoke        # or: just sc
 - Findings about the same problem are clustered across all bouts of an arena. `unique.csv` counts, per contender, the distinct problems it found and how many of those no other contender found.
 - `summary.parquet` / `summary.csv` merge it all with judge verdicts and human labels (`labels/labels.jsonl`). A human label beats ground truth, which beats the judge. The parquet file needs the `analysis` extra (`uv sync --extra analysis`).
 
-The exact rules and columns are in [docs/data-contracts.md](docs/data-contracts.md).
-
 ## Judge
 
 ```bash
@@ -173,15 +256,13 @@ uv run skillordeal judge trials/…/trial.yaml -r r01 --dry-run      # print bat
 uv run skillordeal judge trials/…/trial.yaml -r r01 --max-cost-usd 3
 ```
 
-Findings that ground truth can't decide go to an LLM judge, the model set as `judge:` in `trial.yaml`. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is in `src/skillordeal/prompts/judge.md`.
+The judge is the model set as `judge:` in `trial.yaml`. It rules on every finding of the round that isn't in its cache yet, including ones ground truth already settled; in the summary, ground truth still wins over it. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is `src/skillordeal/prompts/judge.md`, and verdicts are `valid`, `invalid` or `unverifiable`.
 
 - **Blinded:** the judge only sees file, lines, category, CWE, title, description and evidence. Contender and skill names and bout IDs are redacted from the text, and findings from all contenders are shuffled together (deterministically) in batches of `--batch-size` (default 15) per arena.
 - **Cached:** verdicts are stored per judge model, prompt hash and `finding_hash` under `~/.cache/skillordeal/judge/`, so a finding is judged once across all rounds, and a re-run only pays for what's new.
 - **Bounded:** `--max-cost-usd` stops judging once the spend reaches it, and each call's `--max-budget-usd` is capped to what's left. Each call leaves its prompt, record and scrubbed transcript under `scores/judge_runs/`.
 
 `judge` writes `scores/judge.jsonl` and then re-runs `score`.
-
-What happens after a round (scoring, labels, reports) is specified file by file in [docs/data-contracts.md](docs/data-contracts.md).
 
 ## Review
 
@@ -204,8 +285,8 @@ uv run skillordeal report trials/…/trial.yaml -r r01 [--markdown-only]
 
 Reads `scores/summary.parquet` (or `summary.csv`, or just `bouts.csv`) and writes into the round directory:
 
-- `RESULTS.md`: renders on GitHub. It has the trial question, lock hash, engine/CLI/image versions and models, then per arena × task × model tables. Each cell is the mean over ok bouts with a 95% bootstrap CI (fixed seed), and **n** (ok bouts over all bouts) sits next to it. It also shows Δ vs baseline, cost per TP, skill-fired rate and the forced-injection check. That check is first-turn prompt tokens minus the baseline's mean; zero or less gets flagged as "skill may not have loaded". Every contender row links its `bouts/<id>/` dirs, and every bout that didn't finish `ok` is listed with its reason. A "How to reproduce" snippet comes last.
-- `report.html`: one self-contained file, no network. Charts are inline SVG (quality vs cost with a Pareto frontier, cost/tokens, per-arena quality, client resources) and follow light/dark mode. Tables are sortable.
+- `RESULTS.md`: renders on GitHub. It has the trial question, lock hash, engine/CLI/image versions and models, then per arena × task × model tables. Each cell is the mean over ok bouts with a 95% bootstrap CI (fixed seed, `--seed`/`--resamples`), and **n** (ok bouts over all bouts) sits next to it. It also shows Δ vs baseline, cost per TP, skill-fired rate and the forced-injection check. That check is first-turn prompt tokens minus the baseline's mean; zero or less gets flagged as "skill may not have loaded". Every contender row links its `bouts/<id>/` dirs, and every bout that didn't finish `ok` is listed with its reason. A "How to reproduce" snippet comes last.
+- `report.html`: one self-contained file, no network. Charts are inline SVG (quality vs cost with a Pareto frontier, cost/tokens, per-arena quality, client resources) and follow light/dark mode. Tables are sortable. Skipped with `--markdown-only`.
 - `results.csv` and `results.parquet`: the aggregated table, with means, CI bounds and deltas.
 
 ## Triage
@@ -228,6 +309,7 @@ The output is a `contenders:` YAML in the engine's schema. Entries use `repo` + 
 
 ```bash
 just test          # unit tests (no podman, no API)
+just test-podman   # plus podman integration tests
 just lint
 just verify        # lint + tests + gitleaks; run before pushing
 ```
