@@ -7,7 +7,15 @@ from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
-from skillordeal.config import AuthMode, Contender, ContenderKind, Invocation, ModelSpec, Task
+from skillordeal.config import (
+    BASELINE,
+    AuthMode,
+    Contender,
+    ContenderKind,
+    Invocation,
+    ModelSpec,
+    Task,
+)
 
 CTX = "/ctx"
 ARENA = "/arena"
@@ -87,6 +95,35 @@ def build_command(spec: BoutSpec, findings_schema: dict[str, Any]) -> list[str]:
     else:
         cmd += ["--plugin-dir", f"{CTX}/plugins/{spec.plugin_name}"]
     return cmd
+
+
+def plain_spec(
+    model: ModelSpec,
+    tools: list[str],
+    auth_mode: AuthMode,
+    budget_usd: float,
+    *,
+    builtin_skills: tuple[str, ...] = (),
+    builtin_plugins: tuple[str, ...] = (),
+) -> BoutSpec:
+    """A spec with no contender at all, for engine-side runs such as the judge.
+
+    Going through the baseline path keeps every isolation flag of a real bout (and the same
+    isolation gate) instead of maintaining a second command builder.
+    """
+    return BoutSpec(
+        contender=BASELINE,
+        skill_name=None,
+        plugin_name=None,
+        expected_skills=[],
+        model=model,
+        task=Task(id="engine", prompt_file="-", tools=tools, allowed_bash=[]),
+        invocation=Invocation.forced,
+        auth_mode=auth_mode,
+        budget_usd=budget_usd,
+        builtin_skills=builtin_skills,
+        builtin_plugins=builtin_plugins,
+    )
 
 
 # --- stream parsing ---------------------------------------------------------------
