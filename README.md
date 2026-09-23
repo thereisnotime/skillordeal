@@ -8,7 +8,7 @@ A reproducible benchmark harness for LLM agent skills (`SKILL.md` packs, Claude 
 - **Locking:** image digest, CLI version, skill and arena commits, full model IDs and prompt hashes are pinned in a `lock.yaml`. `run` refuses to start on drift, and bout IDs are hashes of their inputs, so rounds resume.
 - **Resource metrics:** tokens, cost, turns and wall time per bout, plus 1 s samples of the client's RSS, threads, file handles and CPU.
 - **Four ways to score:** ground-truth matching, duplicate clustering across contenders, a blinded LLM judge, and blind human review in a local browser UI.
-- **Reports:** `RESULTS.md` with bootstrap CIs, deltas against the baseline and cost per true positive, a self-contained `report.html`, and CSV/parquet exports.
+- **Reports:** `RESULTS.md` with bootstrap CIs, deltas against the baseline and cost per true positive, plus SVG charts and mermaid diagrams that GitHub renders; a self-contained `report.html`; and CSV/parquet exports.
 
 It starts with Claude Code. Other agent CLIs can be added behind `src/skillordeal/adapters/`.
 
@@ -282,13 +282,14 @@ Each verdict is appended to `<trial>/labels/labels.jsonl`. Nothing is rewritten;
 
 ```bash
 uv sync --extra analysis
-uv run skillordeal report trials/…/trial.yaml -r r01 [--markdown-only]
+uv run skillordeal report trials/…/trial.yaml -r r01 [--markdown-only] [--no-charts]
 ```
 
 Reads `scores/summary.parquet` (or `summary.csv`, or just `bouts.csv`) and writes into the round directory:
 
-- `RESULTS.md`: renders on GitHub. It has the trial question, lock hash, engine/CLI/image versions and models, then per arena × task × model tables. Each cell is the mean over ok bouts with a 95% bootstrap CI (fixed seed, `--seed`/`--resamples`), and **n** (ok bouts over all bouts) sits next to it. It also shows Δ vs baseline, cost per TP, skill-fired rate and the forced-injection check. That check is first-turn prompt tokens minus the baseline's mean; zero or less gets flagged as "skill may not have loaded". Every contender row links its `bouts/<id>/` dirs, and every bout that didn't finish `ok` is listed with its reason. A "How to reproduce" snippet comes last.
-- `report.html`: one self-contained file, no network. Charts are inline SVG (quality vs cost with a Pareto frontier, cost/tokens, per-arena quality, client resources) and follow light/dark mode. Tables are sortable. Skipped with `--markdown-only`.
+- `RESULTS.md`: renders on GitHub. It has the trial question, lock hash, engine/CLI/image versions and models, then per arena × task × model tables. Each cell is the mean over ok bouts with a 95% bootstrap CI (fixed seed, `--seed`/`--resamples`), and **n** (ok bouts over all bouts) sits next to it. It also shows Δ vs baseline, cost per TP, skill-fired rate and the forced-injection check. That check is first-turn prompt tokens minus the baseline's mean; zero or less gets flagged as "skill may not have loaded". Every contender row links its `bouts/<id>/` dirs, and every bout that didn't finish `ok` is listed with its reason. A "How to reproduce" snippet comes last. Above the tables it has a "Round at a glance" mermaid flowchart (bouts planned, how each status ended, findings and their verdicts), a per-stage flow for pipeline contenders, and a "Charts" section that embeds the files below.
+- `charts/*.svg`: standalone matplotlib charts, byte-identical on re-run. Per arena: `quality-vs-cost-<arena>.svg` (TP, or judge-valid without ground truth, against cost, with CIs and the Pareto frontier), `findings-breakdown-<arena>.svg` (findings per bout stacked by verdict, so noise is visible) and `delta-vs-baseline-<arena>.svg`. For the round: `recall-by-contender.svg`, `cost-tokens.svg` and `resources.svg`. A chart with no data behind it isn't written or linked. Backgrounds are transparent and the colors are picked to read on both GitHub themes. GitHub won't render inline `<svg>` in markdown, so the trials repo commits `charts/` next to `RESULTS.md` and the images show up when you browse a round. `--no-charts` skips them.
+- `report.html`: one self-contained file, no network. It inlines the same charts, recolored to follow light/dark mode, with hover titles. Tables are sortable. Skipped with `--markdown-only`.
 - `results.csv` and `results.parquet`: the aggregated table, with means, CI bounds and deltas.
 
 ## Triage

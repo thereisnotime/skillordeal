@@ -83,17 +83,20 @@ def report(
     markdown_only: Annotated[
         bool, typer.Option(help="Only RESULTS.md and the exports, no report.html")
     ] = False,
+    charts: Annotated[
+        bool, typer.Option(help="Write SVG charts to rounds/<round>/charts/ and embed them")
+    ] = True,
     seed: Annotated[int, typer.Option(help="Bootstrap seed")] = 20260923,
     resamples: Annotated[int, typer.Option(help="Bootstrap resamples per cell")] = 2000,
 ) -> None:
-    """Write RESULTS.md, report.html and results.csv/parquet for a scored round."""
+    """Write RESULTS.md, charts/, report.html and results.csv/parquet for a scored round."""
     from skillordeal.report import ReportError, build_report
     from skillordeal.rounddata import Round
 
     rd = Round(trial.resolve().parent, rnd)
     try:
         written = build_report(
-            trial, rd, markdown_only=markdown_only, seed=seed, resamples=resamples
+            trial, rd, markdown_only=markdown_only, charts=charts, seed=seed, resamples=resamples
         )
     except ReportError as e:
         _fail(str(e))

@@ -22,9 +22,12 @@ import subprocess
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from skillordeal.rounddata import Round, read_yaml
+
+if TYPE_CHECKING:
+    from skillordeal.report_charts import ChartFile
 
 BASELINE = "baseline"
 DEFAULT_SEED = 20260923
@@ -388,7 +391,60 @@ def _repro(ctx: Context) -> str:
 # --- markdown --------------------------------------------------------------------------
 
 
-def render_markdown(ctx: Context, cells: list[Cell], rnd: Round, resamples: int, seed: int) -> str:
+def _glance_md(ctx: Context, cells: list[Cell], rnd: Round) -> list[str]:
+    from skillordeal.report_mermaid import glance, pipelines
+
+    lines = [
+        "## Round at a glance",
+        "",
+        glance(cells, ctx.lock),
+        "",
+        "Findings and verdicts count ok bouts only; verdicts are the final ones when scored, "
+        "else ground truth, else the judge.",
+        "",
+    ]
+    if flow := pipelines(cells, rnd):
+        lines += [
+            "### Pipelines",
+            "",
+            flow,
+            "",
+            "Findings each stage passed on, summed over the pipeline's ok bouts.",
+            "",
+        ]
+    return lines
+
+
+def _charts_md(charts: list[ChartFile]) -> list[str]:
+    if not charts:
+        return []
+
+    def fig(c: ChartFile) -> list[str]:
+        return [f"![{_md(c.title)}](charts/{c.name})", "", f"*{_md(c.caption)}*", ""]
+
+    lines = ["## Charts", ""]
+    arenas = sorted({c.arena for c in charts if c.arena is not None})
+    for a in arenas:
+        lines += [f"### {a}", ""]
+        for c in charts:
+            if c.arena == a:
+                lines += fig(c)
+    rest = [c for c in charts if c.arena is None]
+    if rest:
+        lines += ["### All arenas", ""]
+        for c in rest:
+            lines += fig(c)
+    return lines
+
+
+def render_markdown(
+    ctx: Context,
+    cells: list[Cell],
+    rnd: Round,
+    resamples: int,
+    seed: int,
+    charts: list[ChartFile] | None = None,
+) -> str:
     lk, img = ctx.lock, ctx.lock.get("image") or {}
     judge = (lk.get("judge") or {}).get("id") if lk.get("judge") else None
     total = sum(len(c.bouts) for c in cells)
@@ -427,6 +483,8 @@ def render_markdown(ctx: Context, cells: list[Cell], rnd: Round, resamples: int,
             "and F1 are n/a. Run `skillordeal score` for ground-truth metrics.",
             "",
         ]
+    lines += _glance_md(ctx, cells, rnd)
+    lines += _charts_md(charts or [])
     for (arena, task, model), group in _groups(cells).items():
         lines += [f"## {arena} · {task} · `{model}`", ""]
         qm = [m for m in QUALITY if _has(group, m.key) or m.key in ("findings", "tp")]
@@ -590,6 +648,7 @@ def build_report(
     rnd: Round,
     *,
     markdown_only: bool = False,
+    charts: bool = True,
     seed: int = DEFAULT_SEED,
     resamples: int = DEFAULT_RESAMPLES,
 ) -> list[Path]:
@@ -598,14 +657,21 @@ def build_report(
         raise ReportError(f"scores/{source} has no rows")
     cells = aggregate(rows, seed=seed, resamples=resamples)
     ctx = _context(trial_file.resolve(), rnd, source)
-    md = render_markdown(ctx, cells, rnd, resamples, seed)
+    figures = []
+    if charts or not markdown_only:
+        from skillordeal.report_charts import build_charts, write_charts
+
+        figures = build_charts(cells, seed=seed, resamples=resamples)
+    md = render_markdown(ctx, cells, rnd, resamples, seed, figures if charts else None)
     rnd.root.mkdir(parents=True, exist_ok=True)
+    written = write_charts(figures, rnd.root) if charts else []
     (rnd.root / "RESULTS.md").write_text(md)
-    written = [rnd.root / "RESULTS.md"]
+    written.append(rnd.root / "RESULTS.md")
     written += write_exports(export_rows(cells), rnd.root)
     if not markdown_only:
         from skillordeal.report_html import render_html
 
-        (rnd.root / "report.html").write_text(render_html(ctx, cells, rnd, resamples, seed))
+        page = render_html(ctx, cells, rnd, resamples, seed, figures)
+        (rnd.root / "report.html").write_text(page)
         written.append(rnd.root / "report.html")
     return written
