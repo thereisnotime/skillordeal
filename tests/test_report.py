@@ -119,9 +119,17 @@ CHARTS = {
     "quality-vs-cost-demo.svg",
     "findings-breakdown-demo.svg",
     "delta-vs-baseline-demo.svg",
+    "reps-demo.svg",
+    "coverage-demo.svg",
+    "agreement-demo.svg",
+    "severity-demo.svg",
+    "efficiency-demo.svg",
     "recall-by-contender.svg",
     "cost-tokens.svg",
     "resources.svg",
+    "bout-status.svg",
+    "skill-load.svg",
+    "tool-calls.svg",
 }
 
 
@@ -183,7 +191,7 @@ def test_results_md_links_only_existing_charts(scored_round):
     links = _chart_links(md)
     assert links == CHARTS
     assert all((rd.root / "charts" / name).is_file() for name in links)
-    assert "## Charts" in md and "### demo" in md and "### All arenas" in md
+    assert "## demo" in md and "### Charts" in md and "## All arenas" in md
     # every chart has a caption with its n right under it
     for name in links:
         caption = md.split(f"(charts/{name})", 1)[1].strip().splitlines()[0]
@@ -218,7 +226,13 @@ def test_charts_from_bouts_csv_only(scored_round):
         w.writerows(rows)
     build_report(scored_round, rd, resamples=100)
     names = {p.name for p in (rd.root / "charts").iterdir()}
-    assert names == {"cost-tokens.svg", "resources.svg"}
+    assert {"cost-tokens.svg", "resources.svg"} <= names
+    # nothing that needs quality or skill columns from the summary
+    for gone in ("quality-vs-cost", "delta-vs-baseline", "findings-breakdown", "efficiency",
+                 "recall-by-contender", "skill-load"):  # fmt: skip
+        assert not any(n.startswith(gone) for n in names), gone
+    # findings.jsonl and gt_matches.jsonl are still there, so the coverage grid is too
+    assert "coverage-demo.svg" in names
     assert _chart_links((rd.root / "RESULTS.md").read_text()) == names
 
 
@@ -252,7 +266,7 @@ def test_no_charts_flag(scored_round):
     assert r.exit_code == 0, r.output
     assert not (rd.root / "charts").exists()
     md = (rd.root / "RESULTS.md").read_text()
-    assert "charts/" not in md and "## Charts" not in md
+    assert "charts/" not in md and "### Charts" not in md
     assert "<svg" in (rd.root / "report.html").read_text()  # the page still inlines them
 
 
@@ -305,3 +319,151 @@ def test_mermaid_labels_are_escaped():
     assert "#quot;end#quot;" in block
     (inner,) = _mermaid_blocks(block)
     _check_mermaid(inner)
+
+
+# --- detail: coverage, takeaways, drill-down ------------------------------------------------
+
+
+def _bout_ids(rd, contender):
+    out = {}
+    for d in rd.bouts.iterdir():
+        rec = json.loads((d / "record.json").read_text())
+        if rec["contender"]["id"] == contender:
+            out[rec["rep"]] = d.name
+    return out
+
+
+def test_key_takeaways(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    build_report(scored_round, rd, markdown_only=True, resamples=200)
+    md = (rd.root / "RESULTS.md").read_text()
+    head, _, rest = md.partition("## Key takeaways")
+    assert rest and "## Round at a glance" in rest
+    assert head.index("| trial |") < len(head)  # takeaways come right after the header
+    bullets = [x for x in rest.split("## Round at a glance")[0].splitlines() if x.startswith("- ")]
+    text = "\n".join(bullets)
+    wrapped = _bout_ids(rd, "wrapped")
+    # failures, with the failing bout linked by rep
+    assert "5 of 6 bouts finished `ok`" in text
+    assert f"`wrapped`: 1 of 2 bouts ok (1 error; bouts [#2](bouts/{wrapped[2]}/))" in text
+    # every contender finds the one issue in every bout: no CI excludes 0
+    assert "**demo**: none of the 1 contenders differs from the baseline" in text
+    assert "1 of 1 ground-truth issues were found by at least one bout" in text
+    assert "1 were found in every ok bout of every contender" in text
+    # cheapest per TP is the baseline ($0.10 per bout, 1 TP each)
+    assert "lowest cost per TP: `baseline` $0.100" in text
+    # wrapped's first turn is no bigger than the baseline's
+    assert "not above the baseline's for `wrapped`" in text
+    # every number links back: the highest-TP line links that contender's bouts
+    assert re.search(r"highest mean TP per bout: .*\]\(bouts/b-[0-9a-f]+/\)", text)
+
+
+def test_takeaways_ci_excludes_zero():
+    from skillordeal.report_detail import takeaways
+
+    rows = []
+    for rep in (1, 2, 3):
+        for name, tp in (("baseline", [4, 5, 4]), ("better", [7, 8, 8]), ("same", [4, 5, 5])):
+            rows.append({"bout_id": f"b-{name}-{rep}", "contender": name, "arena": "a",
+                         "task": "t", "model": "m", "rep": rep, "status": "ok",
+                         "findings": tp[rep - 1], "tp": tp[rep - 1],
+                         "cost_usd": 0.5})  # fmt: skip
+    cells = aggregate(rows, seed=3, resamples=300)
+    text = "\n".join(takeaways(cells, None, seed=3, resamples=300))
+    assert "All 9 bouts finished `ok`." in text
+    assert "above the baseline: `better` +3" in text
+    assert "The other 1 contenders' CIs include 0." in text
+    assert "`same`" not in text.split("above the baseline")[1].split(".")[0]
+
+
+def test_coverage_grid_and_tables(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    build_report(scored_round, rd, resamples=200)
+    svg = (rd.root / "charts" / "coverage-demo.svg").read_text()
+    assert "my-skill · cmdi: found in 2 of 2 ok bouts" in svg
+    assert "wrapped · cmdi: found in 1 of 1 ok bouts" in svg
+    assert "HIGH (1)" in svg
+    md = (rd.root / "RESULTS.md").read_text()
+    assert "### What each contender found" in md
+    assert (
+        "<summary>Ground-truth issues: who found what (1 issues, 0 found by nobody)</summary>" in md
+    )
+    assert "| `cmdi` | Command injection in main | high | CWE-78 | 3/3 | every contender" in md
+    # details blocks are well formed for GitHub: blank line after the summary, closed
+    assert md.count("<details>") == md.count("</details>") > 0
+    for block in md.split("<details>")[1:]:
+        assert re.match(r"\n<summary>[^\n]+</summary>\n\n", block)
+    # the problem the baseline never reported shows who did, linked by rep
+    skill = _bout_ids(rd, "my-skill")
+    assert f"my-skill 2/2 [#1](bouts/{skill[1]}/) [#2](bouts/{skill[2]}/); wrapped 1/1" in md
+    # charts are followed by a how-to-read line
+    assert md.count("*How to read: ") == len(_chart_links(md))
+    agreement = (rd.root / "charts" / "agreement-demo.svg").read_text()
+    assert "by some others too" in agreement
+    tools = (rd.root / "charts" / "tool-calls.svg").read_text()
+    assert "other (Write)" in tools and "Read" in tools
+
+
+def test_html_drilldown_and_takeaways(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    build_report(scored_round, rd, resamples=200)
+    page = (rd.root / "report.html").read_text()
+    assert "<h2>Key takeaways</h2>" in page and '<ul class="takeaways">' in page
+    assert "<h3>Findings by contender</h3>" in page
+    assert page.count("<details>") == 3  # one per contender with ok bouts
+    assert "Traversal bait" in page and "Command injection via os.system" in page
+    assert "tp (gt)" in page or "tp (" in page
+    assert 'href="bouts/' in page and "<strong>my-skill</strong>" in page
+    # every chart written is inlined, and the tables are sortable
+    assert page.count("<svg") == len(CHARTS)
+    assert page.count('class="sortable"') >= 8
+
+
+def test_detail_without_ground_truth(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    arena = scored_round.parent / "arenas" / "demo" / "arena.yaml"
+    arena.write_text(arena.read_text().replace("groundtruth: groundtruth.yaml\n", ""))
+    (rd.scores / "gt_matches.jsonl").unlink()
+    gt = {"tp", "fp", "dup", "unknown", "precision", "recall", "f1"}
+    _rewrite_summary(rd, lambda r: None, drop=gt)
+    build_report(scored_round, rd, resamples=100)
+    names = {p.name for p in (rd.root / "charts").iterdir()}
+    assert "coverage-demo.svg" not in names
+    assert {"problems-demo.svg", "agreement-demo.svg", "efficiency-demo.svg"} <= names
+    svg = (rd.root / "charts" / "problems-demo.svg").read_text()
+    assert "app/main.py:2 CWE-78" in svg
+    md = (rd.root / "RESULTS.md").read_text()
+    assert "Ground-truth issues" not in md and "Distinct problems (finding clusters)" in md
+    assert "judge-valid" in (rd.root / "charts" / "efficiency-demo.svg").read_text()
+
+
+def test_detail_skips_without_findings_or_records(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    for name in ("findings.jsonl", "gt_matches.jsonl", "judge.jsonl"):
+        (rd.scores / name).unlink()
+    for d in rd.bouts.iterdir():
+        (d / "record.json").write_text("{not json")
+        (d / "findings.json").unlink(missing_ok=True)
+    build_report(scored_round, rd, resamples=100)
+    names = {p.name for p in (rd.root / "charts").iterdir()}
+    for gone in ("coverage-demo.svg", "agreement-demo.svg", "severity-demo.svg",
+                 "tool-calls.svg", "problems-demo.svg"):  # fmt: skip
+        assert gone not in names
+    assert {"reps-demo.svg", "bout-status.svg"} <= names
+    md = (rd.root / "RESULTS.md").read_text()
+    assert _chart_links(md) == names
+    assert "### What each contender found" not in md
+    assert "Findings by contender" not in (rd.root / "report.html").read_text()
+
+
+def test_status_chart_only_when_something_failed(scored_round):
+    rd = Round(scored_round.parent, "r01")
+
+    def heal(r):
+        r["status"] = "ok"
+
+    _rewrite_summary(rd, heal)
+    build_report(scored_round, rd, markdown_only=True, resamples=100)
+    names = {p.name for p in (rd.root / "charts").iterdir()}
+    assert "bout-status.svg" not in names
+    assert "All 6 bouts finished `ok`." in (rd.root / "RESULTS.md").read_text()

@@ -10,7 +10,9 @@ from __future__ import annotations
 import html
 import math
 import re
+from collections import Counter
 from importlib.resources import files
+from typing import TYPE_CHECKING, Any
 
 from skillordeal.report import (
     BASELINE,
@@ -27,7 +29,11 @@ from skillordeal.report import (
     injection_flag,
 )
 from skillordeal.report_charts import ChartFile, inline_svg
+from skillordeal.report_detail import Link, join_parts
 from skillordeal.rounddata import Round
+
+if TYPE_CHECKING:
+    from skillordeal.report_detail import Detail, Table, TCell
 
 # --- page ------------------------------------------------------------------------------------
 
@@ -179,6 +185,105 @@ def _figure(c: ChartFile) -> str:
     return f"<figure>{inline_svg(c)}<figcaption>{html.escape(c.caption)}</figcaption></figure>"
 
 
+def _inline_md(text: str) -> str:
+    """The inline markdown the takeaways use: `code`, **bold** and [text](href)."""
+    s = html.escape(text, quote=False)
+    s = re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+    s = re.sub(r"\*\*([^*]+)\*\*", r"<strong>\1</strong>", s)
+    return re.sub(
+        r"\[([^\]]+)\]\(([^)\s]+)\)",
+        lambda m: f'<a href="{html.escape(m.group(2))}">{m.group(1)}</a>',
+        s,
+    )
+
+
+def _cell_html(v: TCell) -> str:
+    if isinstance(v, str):
+        return _inline_md(v)
+    parts = [
+        f'<a href="{html.escape(p.href)}">{html.escape(p.text)}</a>'
+        if isinstance(p, Link)
+        else _inline_md(p)
+        for p in v
+    ]
+    return join_parts(parts, v)
+
+
+def table_html(t: Table) -> str:
+    rows = []
+    for i, row in enumerate(t.rows):
+        keys = t.sort[i] if i < len(t.sort) else []
+        tds = []
+        for j, v in enumerate(row):
+            key = keys[j] if j < len(keys) else None
+            tds.append(_td(_cell_html(v), key, "num" if j in t.numeric else ""))
+        rows.append("<tr>" + "".join(tds) + "</tr>")
+    return _table(t.head, rows, t.title)
+
+
+def _drilldown_html(cells: list[Cell], detail: Detail, arena: str) -> str:
+    """Per contender: every finding of its ok bouts with verdicts, linked to the bout."""
+    findings = detail.arena_findings(arena)
+    if not findings:
+        return ""
+    by: dict[str, list[dict[str, Any]]] = {}
+    for f in findings:
+        by.setdefault(str(f["contender"]), []).append(f)
+    reps = {str(b.get("bout_id")): b.get("rep") for c in cells for b in c.bouts}
+    out = []
+    for name in sorted(by, key=lambda n: (n != BASELINE, n)):
+        fs = by[name]
+        verdicts = Counter(str(f.get("verdict")) for f in fs)
+        summary = ", ".join(f"{v} {k}" for k, v in sorted(verdicts.items()))
+        bouts = len({f["bout_id"] for f in fs})
+        rows = []
+        for f in fs:
+            bid = str(f.get("bout_id"))
+            rep = reps.get(bid)
+            loc = f"{f.get('file') or '?'}:{f.get('line_start') or '?'}"
+            end = f.get("line_end")
+            if end and end != f.get("line_start"):
+                loc += f"-{end}"
+            verdict = str(f.get("verdict") or "")
+            src = f" ({f['source']})" if f.get("source") else ""
+            link = f'<a href="bouts/{html.escape(bid)}/">#{html.escape(str(rep))}</a>'
+            rows.append(
+                "<tr>"
+                + _td(link, _rep(rep))
+                + _td(html.escape(str(f.get("severity") or "")), _sev(f.get("severity")))
+                + _td(html.escape(str(f.get("cwe") or "")), str(f.get("cwe") or ""))
+                + _td(f"<code>{html.escape(loc)}</code>", loc)
+                + _td(html.escape(str(f.get("title") or "")), str(f.get("title") or ""))
+                + _td(html.escape(verdict + src), verdict)
+                + _td(html.escape(str(f.get("issue_id") or "")), str(f.get("issue_id") or ""))
+                + _td(html.escape(str(f.get("judge") or "")), str(f.get("judge") or ""))
+                + "</tr>"
+            )
+        table = _table(
+            ["bout", "severity", "CWE", "location", "title", "verdict", "issue", "judge"],
+            rows,
+            f"{len(fs)} findings from {bouts} ok bouts",
+        )
+        out.append(
+            f"<details><summary><strong>{html.escape(name)}</strong>: {len(fs)} findings "
+            f"({html.escape(summary)})</summary>{table}</details>"
+        )
+    return "".join(out)
+
+
+def _rep(rep: Any) -> float | str:
+    try:
+        return float(rep)
+    except TypeError, ValueError:
+        return str(rep)
+
+
+def _sev(sev: Any) -> int:
+    from skillordeal.report_detail import SEVERITIES
+
+    return SEVERITIES.index(sev) if sev in SEVERITIES else len(SEVERITIES)
+
+
 def render_html(
     ctx: Context,
     cells: list[Cell],
@@ -186,8 +291,10 @@ def render_html(
     resamples: int,
     seed: int,
     charts: list[ChartFile] | None = None,
+    detail: Detail | None = None,
 ) -> str:
     from skillordeal.report import _repro
+    from skillordeal.report_detail import arena_tables, takeaways, tools_table
 
     esc = html.escape
     lk, img = ctx.lock, ctx.lock.get("image") or {}
@@ -223,23 +330,47 @@ def render_html(
             '<p class="banner">No quality scores yet: only <code>bouts.csv</code> was found, '
             "so TP, precision, recall and F1 are n/a. Run <code>skillordeal score</code>.</p>"
         )
+    bullets = takeaways(cells, detail, seed=seed, resamples=resamples)
+    if bullets:
+        body += [
+            "<h2>Key takeaways</h2>",
+            '<ul class="takeaways">' + "".join(f"<li>{_inline_md(b)}</li>" for b in bullets),
+            "</ul>",
+        ]
     body.append(
         f'<p class="note">Means over ok bouts with 95% bootstrap CIs ({resamples} resamples, '
         f"seed {seed}); no interval means n &lt; 2. Arena charts pool each contender over "
         "tasks; the tables keep them apart. Hover a mark for its numbers.</p>"
     )
+    groups = _groups(cells)
+    for arena in sorted({c.arena for c in cells}):
+        body.append(f'<h2 id="arena-{esc(arena)}">{esc(arena)}</h2>')
+        body += map(_figure, [c for c in charts if c.arena == arena])
+        for (a, task, model), group in groups.items():
+            if a == arena:
+                body.append(f"<h3>Tables · {esc(task)} · <code>{esc(model)}</code></h3>")
+                body.append(_group_html(group))
+        if detail is not None:
+            acells = [c for c in cells if c.arena == arena]
+            tables = arena_tables(acells, detail, arena)
+            if tables:
+                body.append("<h3>What each contender found</h3>")
+                body += map(table_html, tables)
+            drill = _drilldown_html(acells, detail, arena)
+            if drill:
+                body += [
+                    "<h3>Findings by contender</h3>",
+                    '<p class="note">Every finding of the ok bouts, with its final verdict '
+                    "(and where it came from), the ground-truth issue it matched and the judge's "
+                    "verdict. Open a contender to see its list.</p>",
+                    f'<div class="drill">{drill}</div>',
+                ]
     overview = [c for c in charts if c.arena is None]
-    if overview:
-        body += ["<h2>Overview</h2>", *map(_figure, overview)]
-    shown: set[str] = set()
-    for (arena, task, model), group in _groups(cells).items():
-        if arena not in shown:
-            shown.add(arena)
-            figs = [c for c in charts if c.arena == arena]
-            if figs:
-                body += [f"<h2>Charts · {esc(arena)}</h2>", *map(_figure, figs)]
-        body.append(f"<h2>{esc(arena)} · {esc(task)} · <code>{esc(model)}</code></h2>")
-        body.append(_group_html(group))
+    tools = tools_table(cells, detail) if detail is not None else None
+    if overview or tools:
+        body += ["<h2>All arenas</h2>", *map(_figure, overview)]
+        if tools:
+            body.append(table_html(tools))
     body += [
         "<h2>Bouts that did not finish ok</h2>",
         _failed_html(cells, rnd),

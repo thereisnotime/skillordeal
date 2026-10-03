@@ -53,3 +53,10 @@ th button:focus-visible { outline: 2px solid var(--series-1); outline-offset: 2p
 .warn { color: var(--warn); font-weight: 600; }
 a { color: var(--series-1); }
 pre { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.5 var(--mono); }
+ul.takeaways { max-width: 90ch; padding-left: 20px; font-size: 14px; }
+ul.takeaways li { margin: 6px 0; }
+.drill details { margin: 6px 0; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; }
+.drill summary { cursor: pointer; padding: 8px 12px; font-size: 13.5px; }
+.drill details[open] summary { border-bottom: 1px solid var(--grid); }
+.drill .tbl { margin: 0; border: 0; border-radius: 0; }
+.drill td { white-space: normal; }

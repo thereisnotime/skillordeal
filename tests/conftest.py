@@ -201,6 +201,8 @@ def scored_round(trial_dir: Path) -> Path:
         }
         if status != "ok":
             rec["error"] = "agent error: overloaded"
+        else:
+            rec["tool_calls"] = {"Read": 10 + k.rep, "Grep": 2, "Write": 1}
         (bdir / "record.json").write_text(json.dumps(rec))
         if status == "ok":
             (bdir / "findings.json").write_text(json.dumps({"summary": "s", "findings": fs}))
@@ -227,6 +229,7 @@ def scored_round(trial_dir: Path) -> Path:
                     "model": k.model,
                     "rep": k.rep,
                     **{x: f.get(x) for x in keep},
+                    "cluster_id": "c-good" if f is GOOD_FINDING else "c-bait",
                 }
             )
             tp = f is GOOD_FINDING

@@ -28,6 +28,7 @@ from skillordeal.rounddata import Round, read_yaml
 
 if TYPE_CHECKING:
     from skillordeal.report_charts import ChartFile
+    from skillordeal.report_detail import Detail, Table, TCell
 
 BASELINE = "baseline"
 DEFAULT_SEED = 20260923
@@ -415,26 +416,92 @@ def _glance_md(ctx: Context, cells: list[Cell], rnd: Round) -> list[str]:
     return lines
 
 
-def _charts_md(charts: list[ChartFile]) -> list[str]:
-    if not charts:
-        return []
+def _fig_md(c: ChartFile) -> list[str]:
+    return [f"![{_md(c.title)}](charts/{c.name})", "", f"*How to read: {_md(c.caption)}*", ""]
 
-    def fig(c: ChartFile) -> list[str]:
-        return [f"![{_md(c.title)}](charts/{c.name})", "", f"*{_md(c.caption)}*", ""]
 
-    lines = ["## Charts", ""]
-    arenas = sorted({c.arena for c in charts if c.arena is not None})
-    for a in arenas:
-        lines += [f"### {a}", ""]
-        for c in charts:
-            if c.arena == a:
-                lines += fig(c)
-    rest = [c for c in charts if c.arena is None]
-    if rest:
-        lines += ["### All arenas", ""]
-        for c in rest:
-            lines += fig(c)
+def md_table(t: Table) -> list[str]:
+    from skillordeal.report_detail import Link, join_parts
+
+    def cell(v: TCell) -> str:
+        if isinstance(v, str):
+            return _md(v)
+        parts = [f"[{p.text}]({p.href})" if isinstance(p, Link) else _md(p) for p in v]
+        return join_parts(parts, v)
+
+    align = "|" + "".join("---:|" if i in t.numeric else "---|" for i in range(len(t.head)))
+    return [
+        "| " + " | ".join(_md(h) for h in t.head) + " |",
+        align,
+        *("| " + " | ".join(cell(v) for v in row) + " |" for row in t.rows),
+    ]
+
+
+def _details(summary: str, body: list[str]) -> list[str]:
+    """A collapsed block; GitHub needs the blank line after <summary> to render markdown."""
+    return ["<details>", f"<summary>{_md(summary)}</summary>", "", *body, "", "</details>", ""]
+
+
+def _group_md(group: list[Cell]) -> list[str]:
+    qm = [m for m in QUALITY if _has(group, m.key) or m.key in ("findings", "tp")]
+    lines = [
+        "**Quality**",
+        "",
+        "| contender | n | " + " | ".join(m.label for m in qm) + " | bouts |",
+        "|---|---|" + "---:|" * len(qm) + "---|",
+    ]
+    for c in group:
+        vals = " | ".join(fmt_est(c.est[m.key], m.fmt) for m in qm)
+        lines.append(f"| {_md(c.contender)} | {_n(c)} | {vals} | {_bout_links(c)} |")
+    lines += [
+        "",
+        "**Against baseline**",
+        "",
+        "| contender | Δ TP | Δ F1 | Δ cost $ | cost per TP $ | skill fired | "
+        "first-turn tokens vs baseline | check |",
+        "|---|---:|---:|---:|---:|---:|---:|---|",
+    ]
+    if not any(c.contender == BASELINE for c in group):
+        lines.append("| (no baseline in this group) | | | | | | | |")
+    for c in group:
+        if c.contender == BASELINE:
+            continue
+        fired = f"{c.fired_rate:.0%} (n={c.fired_n})" if not math.isnan(c.fired_rate) else "n/a"
+        inj = "n/a" if math.isnan(c.injected) else f"{c.injected:+,.0f}"
+        flag = injection_flag(c)
+        lines.append(
+            f"| {_md(c.contender)} | {fmt_est(c.delta.get('tp', _NA), 'num', True)} "
+            f"| {fmt_est(c.delta.get('f1', _NA), 'ratio', True)} "
+            f"| {fmt_est(c.delta.get('cost_usd', _NA), 'usd', True)} "
+            f"| {fmt_value(c.cost_per_tp, 'usd')} | {fired} | {inj} "
+            f"| {'⚠ ' + flag if flag else 'ok' if inj != 'n/a' else ''} |"
+        )
+    cost = [
+        "| contender | n | " + " | ".join(m.label for m in COST) + " | spent, all bouts |",
+        "|---|---|" + "---:|" * (len(COST) + 1),
+    ]
+    for c in group:
+        vals = " | ".join(fmt_est(c.est[m.key], m.fmt) for m in COST)
+        cost.append(f"| {_md(c.contender)} | {_n(c)} | {vals} | ${c.spent_usd:.3f} |")
+    lines += ["", *_details("Cost and resources per bout, mean [95% CI]", cost)]
     return lines
+
+
+def _takeaways_md(cells: list[Cell], detail: Detail | None, resamples: int, seed: int) -> list[str]:
+    from skillordeal.report_detail import takeaways
+
+    bullets = takeaways(cells, detail, seed=seed, resamples=resamples)
+    if not bullets:
+        return []
+    return [
+        "## Key takeaways",
+        "",
+        *(f"- {b}" for b in bullets),
+        "",
+        "Generated from the numbers below, without interpretation: means are over ok bouts, "
+        "brackets are 95% bootstrap CIs, and numbers link to the bouts behind them.",
+        "",
+    ]
 
 
 def render_markdown(
@@ -444,12 +511,16 @@ def render_markdown(
     resamples: int,
     seed: int,
     charts: list[ChartFile] | None = None,
+    detail: Detail | None = None,
 ) -> str:
+    from skillordeal.report_detail import arena_tables, tools_table
+
     lk, img = ctx.lock, ctx.lock.get("image") or {}
     judge = (lk.get("judge") or {}).get("id") if lk.get("judge") else None
     total = sum(len(c.bouts) for c in cells)
     ok = sum(len(c.ok) for c in cells)
     spent = sum(c.spent_usd for c in cells)
+    charts = charts or []
     lines = [
         f"# {_md(ctx.title)}: round {ctx.round}",
         "",
@@ -483,54 +554,36 @@ def render_markdown(
             "and F1 are n/a. Run `skillordeal score` for ground-truth metrics.",
             "",
         ]
+    lines += _takeaways_md(cells, detail, resamples, seed)
     lines += _glance_md(ctx, cells, rnd)
-    lines += _charts_md(charts or [])
-    for (arena, task, model), group in _groups(cells).items():
-        lines += [f"## {arena} · {task} · `{model}`", ""]
-        qm = [m for m in QUALITY if _has(group, m.key) or m.key in ("findings", "tp")]
-        lines += [
-            "**Quality**",
-            "",
-            "| contender | n | " + " | ".join(m.label for m in qm) + " | bouts |",
-            "|---|---|" + "---:|" * len(qm) + "---|",
-        ]
-        for c in group:
-            vals = " | ".join(fmt_est(c.est[m.key], m.fmt) for m in qm)
-            lines.append(f"| {_md(c.contender)} | {_n(c)} | {vals} | {_bout_links(c)} |")
-        lines += [
-            "",
-            "**Cost and resources**",
-            "",
-            "| contender | n | " + " | ".join(m.label for m in COST) + " | spent, all bouts |",
-            "|---|---|" + "---:|" * (len(COST) + 1),
-        ]
-        for c in group:
-            vals = " | ".join(fmt_est(c.est[m.key], m.fmt) for m in COST)
-            lines.append(f"| {_md(c.contender)} | {_n(c)} | {vals} | ${c.spent_usd:.3f} |")
-        lines += [
-            "",
-            "**Against baseline**",
-            "",
-            "| contender | Δ TP | Δ F1 | Δ cost $ | cost per TP $ | skill fired | "
-            "first-turn tokens vs baseline | check |",
-            "|---|---:|---:|---:|---:|---:|---:|---|",
-        ]
-        if not any(c.contender == BASELINE for c in group):
-            lines.append("| (no baseline in this group) | | | | | | | |")
-        for c in group:
-            if c.contender == BASELINE:
+
+    groups = _groups(cells)
+    for arena in sorted({c.arena for c in cells}):
+        lines += [f"## {arena}", ""]
+        figs = [c for c in charts if c.arena == arena]
+        if figs:
+            lines += ["### Charts", ""]
+            for f in figs:
+                lines += _fig_md(f)
+        for (a, task, model), group in groups.items():
+            if a != arena:
                 continue
-            fired = f"{c.fired_rate:.0%} (n={c.fired_n})" if not math.isnan(c.fired_rate) else "n/a"
-            inj = "n/a" if math.isnan(c.injected) else f"{c.injected:+,.0f}"
-            flag = injection_flag(c)
-            lines.append(
-                f"| {_md(c.contender)} | {fmt_est(c.delta.get('tp', _NA), 'num', True)} "
-                f"| {fmt_est(c.delta.get('f1', _NA), 'ratio', True)} "
-                f"| {fmt_est(c.delta.get('cost_usd', _NA), 'usd', True)} "
-                f"| {fmt_value(c.cost_per_tp, 'usd')} | {fired} | {inj} "
-                f"| {'⚠ ' + flag if flag else 'ok' if inj != 'n/a' else ''} |"
-            )
-        lines.append("")
+            lines += [f"### Tables · {task} · `{model}`", "", *_group_md(group), ""]
+        if detail is not None:
+            tables = arena_tables([c for c in cells if c.arena == arena], detail, arena)
+            if tables:
+                lines += ["### What each contender found", ""]
+                for t in tables:
+                    lines += _details(t.title, md_table(t))
+
+    rest = [c for c in charts if c.arena is None]
+    tools = tools_table(cells, detail) if detail is not None else None
+    if rest or tools:
+        lines += ["## All arenas", ""]
+        for f in rest:
+            lines += _fig_md(f)
+        if tools:
+            lines += _details(tools.title, md_table(tools))
 
     bad = [(c, b) for c in cells for b in c.bouts if b.get("status") != "ok"]
     lines += ["## Bouts that did not finish ok", ""]
@@ -571,6 +624,8 @@ def render_markdown(
         "minus the baseline's. A skill that loaded should add tokens; zero or less is flagged.",
         "- **skill fired** is the share of ok bouts where the skill was invoked (forced "
         "invocation counts as fired).",
+        "- **Distinct problems** are clusters of findings about the same code across all bouts "
+        "of an arena (same file, lines within ±5, same CWE or category).",
         "- Cost is the CLI's client-side estimate (notional under OAuth).",
         "",
     ]
@@ -657,12 +712,17 @@ def build_report(
         raise ReportError(f"scores/{source} has no rows")
     cells = aggregate(rows, seed=seed, resamples=resamples)
     ctx = _context(trial_file.resolve(), rnd, source)
+    from skillordeal.report_detail import load_detail
+
+    detail = load_detail(trial_file.resolve(), rnd, cells)
     figures = []
     if charts or not markdown_only:
         from skillordeal.report_charts import build_charts, write_charts
 
-        figures = build_charts(cells, seed=seed, resamples=resamples)
-    md = render_markdown(ctx, cells, rnd, resamples, seed, figures if charts else None)
+        figures = build_charts(cells, seed=seed, resamples=resamples, detail=detail)
+    md = render_markdown(
+        ctx, cells, rnd, resamples, seed, figures if charts else None, detail=detail
+    )
     rnd.root.mkdir(parents=True, exist_ok=True)
     written = write_charts(figures, rnd.root) if charts else []
     (rnd.root / "RESULTS.md").write_text(md)
@@ -671,7 +731,7 @@ def build_report(
     if not markdown_only:
         from skillordeal.report_html import render_html
 
-        page = render_html(ctx, cells, rnd, resamples, seed, figures)
+        page = render_html(ctx, cells, rnd, resamples, seed, figures, detail=detail)
         (rnd.root / "report.html").write_text(page)
         written.append(rnd.root / "report.html")
     return written

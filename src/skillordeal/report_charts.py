@@ -18,7 +18,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from skillordeal.report import (
     BASELINE,
@@ -34,6 +34,9 @@ from skillordeal.report import (
     fmt_value,
 )
 
+if TYPE_CHECKING:
+    from skillordeal.report_detail import Detail
+
 # Palette: dataviz reference dark-mode steps, validated (all pairs) against #ffffff and #0d1117.
 S1 = "#3987e5"  # blue: contenders, tp / valid
 S2 = "#d95926"  # orange: Pareto frontier, fp / invalid
@@ -46,7 +49,7 @@ AXIS = "#8c8c8c"  # drawn at AXIS_ALPHA
 GRID_ALPHA = 0.3
 AXIS_ALPHA = 0.6
 FONT_STACK = 'system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif'
-WIDTH = 7.6  # inches; every figure shares it so text scales alike
+WIDTH = 10.0  # inches (960 px); every figure shares it so text scales alike
 
 CPU = Metric("cpu_s", "CPU s", "cpu_s", "sec")
 RSS = COST[4]
@@ -363,7 +366,7 @@ def chart_quality_cost(
         return None
     name = f"quality-vs-cost-{_slug(arena)}.svg"
     plt, ch = _plt(), Chart(name)
-    fig, ax = plt.subplots(figsize=(WIDTH, 4.2))
+    fig, ax = plt.subplots(figsize=(WIDTH, 5.2))
     _style(ax, grid_axis="both")
     front = _frontier([(x.mean, y.mean) for _, x, y in rows])
     if len(front) > 1:
@@ -773,22 +776,36 @@ def chart_delta(
 # --- entry points --------------------------------------------------------------------------
 
 
-def build_charts(cells: list[Cell], *, seed: int, resamples: int) -> list[ChartFile]:
-    """Every chart the data supports, in display order. Arena charts first, arena by arena."""
+def build_charts(
+    cells: list[Cell], *, seed: int, resamples: int, detail: Detail | None = None
+) -> list[ChartFile]:
+    """Every chart the data supports, in display order. Arena charts first, arena by arena.
+
+    `detail` (findings, verdicts, ground-truth issues, tool calls) enables the charts of what
+    each contender found; without it only the per-bout charts are drawn.
+    """
+    from skillordeal.report_charts_detail import arena_charts, round_charts
+
     by_arena: dict[str, list[Cell]] = defaultdict(list)
     for c in cells:
         by_arena[c.arena].append(c)
     multi = len({c.model for c in cells}) > 1
     out: list[ChartFile | None] = []
     for arena, cs in sorted(by_arena.items()):
+        extra = arena_charts(arena, cs, detail, multi)
         out += [
             chart_quality_cost(arena, cs, multi, seed, resamples),
-            chart_breakdown(arena, cs, multi),
             chart_delta(arena, cs, multi, seed, resamples),
+            *extra[:-2],
+            chart_breakdown(arena, cs, multi),
+            *extra[-2:],
         ]
     ordered = dict(sorted(by_arena.items()))
+    status, *more = round_charts(ordered, detail)
     out += [
+        status,
         chart_recall(ordered, multi, seed, resamples),
+        *more,
         chart_cost_tokens(ordered, multi, seed, resamples),
         chart_resources(cells, multi, seed, resamples),
     ]
