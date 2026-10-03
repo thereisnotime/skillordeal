@@ -258,13 +258,38 @@ uv run skillordeal judge trials/…/trial.yaml -r r01 --dry-run      # print bat
 uv run skillordeal judge trials/…/trial.yaml -r r01 --max-cost-usd 3
 ```
 
-The judge is the model set as `judge:` in `trial.yaml`. It rules on every finding of the round that isn't in its cache yet, including ones ground truth already settled; in the summary, ground truth still wins over it. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is `src/skillordeal/prompts/judge.md`, and verdicts are `valid`, `invalid` or `unverifiable`.
+The judge is the model set as `judge:` in `trial.yaml`. It rules on every finding of the round that isn't in its cache yet, including ones ground truth already settled; in the summary, ground truth still wins over it. It runs in the same runner image and sandbox as a bout, with the arena mounted read-only and only `Read`, `Grep` and `Glob` available. It's asked to open the cited code, be skeptical, require attacker-controlled input for security findings, and reject hardening-only advice. The prompt is `src/skillordeal/prompts/judge.md`, and verdicts are `valid`, `invalid` or `unverifiable`. That's the default fact mode; for a threat-model-aware verdict use [panel mode](#panel-mode).
 
 - **Blinded:** the judge only sees file, lines, category, CWE, title, description and evidence. Contender and skill names and bout IDs are redacted from the text, and findings from all contenders are shuffled together (deterministically) in batches of `--batch-size` (default 15) per arena.
 - **Cached:** verdicts are stored per judge model, prompt hash and `finding_hash` under `~/.cache/skillordeal/judge/`, so a finding is judged once across all rounds, and a re-run only pays for what's new.
 - **Bounded:** `--max-cost-usd` stops judging once the spend reaches it, and each call's `--max-budget-usd` is capped to what's left. Each call leaves its prompt, record and scrubbed transcript under `scores/judge_runs/`.
 
 `judge` writes `scores/judge.jsonl` and then re-runs `score`.
+
+### Panel mode
+
+The default (`mode: fact`) judge checks that the code does what a finding says. That's a low bar: on a real codebase it accepted 694 of 695 findings, because it never asks who controls the input or whether the attacker gains anything they didn't already have. The panel judge asks exactly that. It's modelled on the verifier in Anthropic's claude-security plugin: each voter tries to **disprove** the finding through one lens, and the finding survives only if refutation fails.
+
+```yaml
+judge:
+  id: claude-sonnet-4-6
+  mode: panel                                     # fact (default) | panel
+  voters: 3                                       # default 3; extra voters wrap around the lenses
+  lenses: [reachability, impact, correctness]     # the default
+```
+
+```bash
+uv run skillordeal judge trials/…/trial.yaml -r r01 --mode panel --dry-run   # batches + one prompt per lens
+uv run skillordeal judge trials/…/trial.yaml -r r01 --mode panel --max-cost-usd 10
+```
+
+- **Lenses:** `reachability` asks whether an attacker can reach the code with input they control, naming who authors that input and whether the code may trust them. `impact` asks what the attacker gains beyond what their position already allows. `correctness` asks whether the code really does what the finding claims at the cited lines. All voters are told that self-inflicted and same-privilege issues are false positives, that deployment preconditions are hurdles to rate rather than refutations unless a default shipped in the repo closes the path, to cite the deciding lines, and that they can't run anything. The prompt is one template, `src/skillordeal/prompts/judge_panel.md`, with a section per lens.
+- **Votes:** each voter is its own blinded call in the same sandbox as the fact judge, and every voter sees the same batch. It answers per finding with `true_positive`, `false_positive` or `unverifiable`, who the attacker is, what they gain (one line), a confidence and a rationale citing file:lines (`schemas/panel_votes.schema.json`).
+- **Verdict:** the engine, not a model, takes the majority of the decisive votes: `valid` or `invalid`. A tie, or more `unverifiable` votes than decisive ones, gives `unverifiable`. `judge.jsonl` keeps every vote with its attacker and gain lines plus the agreement, and the summary maps `valid`→tp and `invalid`→fp as before.
+- **Cache and budget:** votes are cached per finding and voter under `judge/<model>/panel-<prompt hash>/<lens>/`, apart from fact verdicts. `--max-cost-usd` covers all voters together. A run that stops (budget, errors, a dropped ref) keeps the votes it got and the next run only asks the voters that are still missing. `--mode` overrides the trial's mode for one run, and `judge.jsonl` always holds whichever mode ran last.
+- **Report:** when `judge.jsonl` comes from the panel, RESULTS.md says "panel-valid" instead of "judge-valid", the key takeaways say which judge ruled, and each arena gets a per-contender table of panel verdicts with the judge agreement (share of findings with unanimous votes).
+
+`mode`, `voters` and `lenses` are left out of the lock and trial hash, so switching a locked round to the panel judge isn't drift.
 
 ## Review
 
