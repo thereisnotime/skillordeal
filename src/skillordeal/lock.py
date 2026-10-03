@@ -433,7 +433,7 @@ def build_lock(
     body = {
         "lock_version": LOCK_VERSION,
         "trial": lt.trial.id,
-        "trial_hash": sha256_obj(lt.trial.model_dump(mode="json")),
+        "trial_hash": sha256_obj(_trial_dump(lt)),
         "engine": {"name": "skillordeal", "version": __version__},
         "image": image,
         "runtime": {
@@ -444,7 +444,7 @@ def build_lock(
             "network": rt.network.model_dump(mode="json"),
         },
         "models": [m.model_dump(mode="json") for m in lt.trial.models],
-        "judge": lt.trial.judge.model_dump(mode="json") if lt.trial.judge else None,
+        "judge": lt.trial.judge.model_only() if lt.trial.judge else None,
         "reps": lt.trial.reps,
         "invocation": lt.trial.invocation.value,
         "findings_schema_sha256": file_sha256(FINDINGS_SCHEMA_PATH),
@@ -458,6 +458,18 @@ def build_lock(
         "lock_hash": sha256_obj(body),
         "created_at": dt.datetime.now(dt.UTC).isoformat(timespec="seconds"),
     }
+
+
+def _trial_dump(lt: LoadedTrial) -> dict[str, Any]:
+    """The trial as hashed into the lock, minus how the judge rules (mode, voters, lenses).
+
+    Switching a round to the panel judge must not make its bouts look drifted, and leaving the
+    ruling fields out keeps the hash of every trial written before they existed.
+    """
+    data = lt.trial.model_dump(mode="json")
+    if lt.trial.judge is not None:
+        data["judge"] = lt.trial.judge.model_only()
+    return data
 
 
 def _local_git_state(path: Path) -> dict[str, Any] | None:

@@ -467,3 +467,44 @@ def test_status_chart_only_when_something_failed(scored_round):
     names = {p.name for p in (rd.root / "charts").iterdir()}
     assert "bout-status.svg" not in names
     assert "All 6 bouts finished `ok`." in (rd.root / "RESULTS.md").read_text()
+
+
+def _quality_header(md: str) -> str:
+    return next(line for line in md.splitlines() if line.startswith("| contender | n | findings"))
+
+
+def test_report_names_the_fact_judge(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    build_report(scored_round, rd, markdown_only=True, resamples=100)
+    md = (rd.root / "RESULTS.md").read_text()
+    assert "judge-valid" in _quality_header(md) and "panel-valid" not in md
+    assert "Judge: fact mode, one ruling per finding" in md
+    assert "judge agreement" not in md
+
+
+def test_report_with_panel_judge(scored_round):
+    rd = Round(scored_round.parent, "r01")
+    path = rd.scores / "judge.jsonl"
+    rows = [json.loads(x) for x in path.read_text().splitlines()]
+    lenses = ["reachability", "impact", "correctness"]
+    for r in rows:
+        r |= {"mode": "panel", "lenses": lenses, "unanimous": r["verdict"] == "valid"}
+    path.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    # without ground truth the takeaways rank contenders by the judge's verdicts
+    gt = {"tp", "fp", "dup", "unknown", "precision", "recall", "f1"}
+    _rewrite_summary(rd, lambda r: None, drop=gt)
+    (rd.scores / "gt_matches.jsonl").unlink()
+    build_report(scored_round, rd, resamples=100)
+    md = (rd.root / "RESULTS.md").read_text()
+    assert "panel-valid" in _quality_header(md) and "judge-valid" not in md
+    assert "highest mean panel-valid per bout" in md
+    assert (
+        "Judge: panel mode, 3 blinded voters (reachability, impact, correctness) each trying "
+        "to refute every finding, verdict by majority. Of 8 judged findings in ok bouts, 5 are "
+        "panel-valid, 3 panel-invalid and 0 unverifiable; 5 (62%) had unanimous votes."
+    ) in md
+    # per-contender judge agreement table
+    assert "Panel judge verdicts per contender (judge agreement" in md
+    assert "| my-skill | 4 | 2 | 2 | 0 | 50% |" in md
+    assert "| baseline | 2 | 2 | 0 | 0 | 100% |" in md
+    assert "panel-valid" in (rd.root / "report.html").read_text()

@@ -95,16 +95,18 @@ Written by `skillordeal score` and `skillordeal judge`. Everything here can be r
 |---|---|---|
 | `findings.jsonl` | one per finding | finding_id, finding_hash, bout_id, contender, arena, task, model, rep, category, severity, confidence, cwe, file (normalized), line_start, line_end (`line_start` when missing), title, description, evidence, recommendation, cluster_id |
 | `gt_matches.jsonl` | one per finding of an arena with ground truth | finding_id, finding_hash, verdict (`tp`/`dup`/`fp`/`unknown`), issue_id, match_basis (`cwe`/`category`), line_distance |
-| `judge.jsonl` | one per judged finding | finding_hash, finding_id, judge_model, verdict (`valid`/`invalid`/`unverifiable`, validity only; overlap is left to clusters), confidence, rationale, cluster_id, prompt_sha, batch_id, judged_at |
+| `judge.jsonl` | one per judged finding | finding_hash, finding_id, judge_model, verdict (`valid`/`invalid`/`unverifiable`, validity only; overlap is left to clusters), confidence, rationale, cluster_id, prompt_sha, batch_id, judged_at. Panel rows (only findings every voter has voted on) add: mode (`panel`; fact rows have no `mode`), lenses (voter slots in order), votes (per slot: slot, lens, vote `true_positive`/`false_positive`/`unverifiable`, confidence, attacker, gain, rationale), attacker and gain (from the first vote backing the verdict), agreement (share of voters who cast the most common vote), unanimous. For panel rows `rationale` joins the backing votes' rationales, `judged_at` is the latest vote, and `batch_id` is the first voter's batch |
 | `verdicts.jsonl` | one per finding | finding_id, finding_hash, bout_id, cluster_id, human, gt, judge, issue_id, verdict (`tp`/`fp`/`dup`/`unknown`), source (`human`/`gt`/`judge`) |
 | `bouts.csv` | one per bout | bout_id, contender, arena, task, model, rep, status, findings, cost_usd, tokens_total, input/output/cache tokens, duration_s, api_s, turns, skill_fired, first_turn_prompt_tokens, rss_peak_kb, threads_peak, fds_peak, cpu_s, stages (pipeline bouts: stages that ran), findings_before_verify (pipeline bouts) |
 | `unique.csv` | one per arena × contender | bouts, findings, clusters, exclusive_clusters (clusters no other contender found) |
 | `summary.parquet`, `summary.csv` | bouts.csv plus per-bout aggregates | tp, dup, fp, unknown, gt_issues, gt_complete, issues_found, precision, precision_lower_bound, recall, f1, f1_lower_bound, judge_valid/invalid/unverifiable/pending, human_tp/fp/dup/unsure, final_tp/fp/dup/unknown, final_precision, clusters |
-| `judge_runs/<batch_id>/` | one per judge call | prompt.md, record.json (refs → finding_hash, usage, problems), transcript.jsonl.zst, stderr.log |
+| `judge_runs/<batch_id>/` | one per judge call | prompt.md, record.json (refs → finding_hash, usage, problems), transcript.jsonl.zst, stderr.log. Panel calls are `judge_runs/<batch_id>-<slot>/`, and their record.json adds mode, slot and lens and counts `votes` instead of `verdicts` |
 
 Aggregates are blank for bouts that aren't `ok`.
 
-**Verdict precedence** when several sources exist: human, then ground truth, then judge. Only decisive answers count (`tp`/`fp`/`dup`, judge `valid`→tp, `invalid`→fp); `unsure`, `unknown` and `unverifiable` fall through to the next source.
+**Verdict precedence** when several sources exist: human, then ground truth, then judge. Only decisive answers count (`tp`/`fp`/`dup`, judge `valid`→tp, `invalid`→fp); `unsure`, `unknown` and `unverifiable` fall through to the next source. This holds for both judge modes.
+
+**Panel verdict**: decisive votes are `true_positive` and `false_positive`. If `unverifiable` votes outnumber decisive ones, or the decisive votes tie, the verdict is `unverifiable` (confidence `low`); otherwise the majority wins, `valid` for `true_positive`, `invalid` for `false_positive`, with confidence `high` when unanimous and `medium` otherwise. Computed by the engine, never by a model.
 
 **Clusters** (`cluster_id`) group findings about the same problem across all bouts of an arena: same normalized file, lines overlapping within ±5 (or `score --window`), and a shared CWE when both cite one, else the same category. Clusters are connected components, and `cluster_id = "c-" + sha256("<arena>:<smallest member finding_hash>")[:16]`.
 
@@ -114,3 +116,10 @@ Contains the same object as a `judge.jsonl` row (with the `cluster_id` of the ro
 
 - `<judge_model>` is the trial's `judge` model slug (`id`, or `id@effort`); the root is `runtime.cache_dir`.
 - `<prompt_sha>` = sha256 of `src/skillordeal/prompts/judge.md`, a newline, and the canonical JSON of `schemas/verdicts.schema.json`. Editing either starts a fresh cache.
+
+## Panel vote cache: `~/.cache/skillordeal/judge/<judge_model>/panel-<panel_sha>/<slot>/<finding_hash>.json`
+
+One vote per finding per voter slot: finding_hash, judge_model, slot, lens, vote, confidence, attacker, gain, rationale, prompt_sha, batch_id, voted_at. The `panel-` prefix keeps it apart from fact verdicts of the same model, and the panel verdict is recomputed from these votes on every run, so changing `voters` or `lenses` reuses every vote it can.
+
+- `<panel_sha>` = sha256 of `src/skillordeal/prompts/judge_panel.md` (shared template and every lens), a newline, and the canonical JSON of `schemas/panel_votes.schema.json`.
+- `<slot>` is the lens name for the first voter on a lens, then `<lens>-2`, `<lens>-3` when `voters` wraps around the lenses.

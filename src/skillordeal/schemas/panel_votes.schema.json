@@ -1,0 +1,24 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["votes"],
+  "properties": {
+    "votes": {
+      "type": "array",
+      "description": "Exactly one entry per finding you were given.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_ref", "vote", "attacker", "gain", "confidence", "rationale"],
+        "properties": {
+          "finding_ref": {"type": "string", "description": "The finding's ref, e.g. F3."},
+          "vote": {"type": "string", "enum": ["true_positive", "false_positive", "unverifiable"]},
+          "attacker": {"type": "string", "description": "Who authors the input that reaches this code, and whether the code may trust them."},
+          "gain": {"type": "string", "description": "One line: what the attacker gets beyond what their position already allows, or \"nothing\"."},
+          "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+          "rationale": {"type": "string", "description": "One to three sentences citing the file:lines that decide it."}
+        }
+      }
+    }
+  }
+}
