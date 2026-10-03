@@ -28,7 +28,7 @@ import zstandard
 from skillordeal.adapters import claude_code as cc
 from skillordeal.blind import Blinder, blind_terms
 from skillordeal.bout import ContainerRun, podman_create_args, prepare_arena
-from skillordeal.config import Arena, AuthMode, LoadedTrial, ModelSpec
+from skillordeal.config import Arena, AuthMode, JudgeSpec, LoadedTrial, ModelSpec
 from skillordeal.egress import Egress
 from skillordeal.lock import image_ref
 from skillordeal.schemas import load as load_schema
@@ -58,7 +58,7 @@ def prompt_sha(template: str | None = None) -> str:
     return sha256_text(t + "\n" + canonical_json(load_schema("verdicts")))
 
 
-def require_judge(lt: LoadedTrial) -> ModelSpec:
+def require_judge(lt: LoadedTrial) -> JudgeSpec:
     if lt.trial.judge is None:
         raise ScoreError(
             f"trial {lt.trial.id} has no judge model; add `judge: {{id: <full model id>}}` "
@@ -88,6 +88,7 @@ class Batch:
     items: list[dict[str, Any]]  # finding rows, one per finding_hash, in prompt order
     prompt: str = ""
     refs: dict[str, str] = field(default_factory=dict)  # ref -> finding_hash
+    payload: list[dict[str, Any]] = field(default_factory=list)  # the blinded findings, by ref
 
     @property
     def batch_id(self) -> str:
@@ -139,6 +140,7 @@ def plan_batches(
                 ref = f"F{n}"
                 b.refs[ref] = item["finding_hash"]
                 payload.append(blinded(item, ref, blind))
+            b.payload = payload
             b.prompt = render_prompt(template, arenas[aid], payload)
             batches.append(b)
     return batches
@@ -222,6 +224,7 @@ class JudgeRun:
     judged: int = 0  # new verdicts this run
     cached: int = 0  # verdicts served from the cache
     missing: int = 0  # findings still without a verdict (errors, budget)
+    votes: int = 0  # panel only: new voter votes this run
     problems: list[str] = field(default_factory=list)
 
 
@@ -343,6 +346,89 @@ def run_judge(
     return res
 
 
+@dataclass
+class Call:
+    """One sandboxed judge container run, before its output is interpreted."""
+
+    output: Any  # structured output, None unless trusted
+    trusted: bool  # finished in time, isolation held, no agent error: output may be parsed
+    cost: float
+    problems: list[str]
+    command: list[str]
+    exit_code: int
+    usage: dict[str, Any]
+    egress: dict[str, Any]
+
+
+def run_call(
+    run_id: str,
+    prompt: str,
+    schema: dict[str, Any],
+    spec: cc.BoutSpec,
+    arena_dir: Path,
+    work_root: Path,
+    lt: LoadedTrial,
+    creds: Credentials,
+    scrub: Scrubber,
+    runner: Runner,
+    out: Path,
+) -> Call:
+    """Run one judge prompt in the bout sandbox; leaves prompt, transcript and stderr in `out`."""
+    rt = lt.trial.runtime
+    out.mkdir(parents=True, exist_ok=True)
+    work = work_root / run_id
+    ctx_dir, cfg_dir = work / "ctx", work / "cfg"
+    ctx_dir.mkdir(parents=True)
+    cfg_dir.mkdir(parents=True)
+    if creds.mode == AuthMode.credentials_file and creds.credentials_file:
+        shutil.copy2(creds.credentials_file, cfg_dir / ".credentials.json")
+        os.chmod(cfg_dir / ".credentials.json", 0o600)
+
+    command = cc.build_command(spec, schema)
+    name = f"so-{run_id}"
+    # Fake runners in tests never touch podman, so the proxy only runs for the real one.
+    egress = Egress(name, image_ref(rt), rt.network, enabled=runner is podman_runner)
+    (out / "prompt.md").write_text(prompt)
+    with egress:
+        create = podman_create_args(
+            name, image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command,
+            extra=egress.podman_args,
+        )  # fmt: skip
+        run = runner(create, {**os.environ, **creds.env}, prompt, rt.limits.timeout_s)
+    lines = [scrub(line) for line in run.lines]
+    cctx = zstandard.ZstdCompressor(level=12)
+    (out / "transcript.jsonl.zst").write_bytes(cctx.compress("".join(lines).encode()))
+    (out / "stderr.log").write_text(scrub(run.stderr))
+
+    ps = cc.parse_stream(lines)
+    usage = cc.usage_summary(ps.result)
+    problems = cc.isolation_problems(ps, spec)
+    tools = set((ps.init or {}).get("tools") or []) - {*TOOLS, "StructuredOutput"}
+    if tools:
+        problems.append(f"unexpected-tools: {sorted(tools)}")
+    trusted = False
+    if run.timed_out:
+        problems.append(f"timed out after {rt.limits.timeout_s}s")
+    elif problems:
+        pass  # isolation failed: don't trust (or cache) anything this run said
+    elif ps.result is None or usage.get("is_error"):
+        problems.append(
+            "agent error: " + ("; ".join(ps.api_errors) or str(usage.get("terminal_reason")))
+        )
+    else:
+        trusted = True
+    return Call(
+        output=cc.structured_output(ps.result) if trusted else None,
+        trusted=trusted,
+        cost=float(usage.get("total_cost_usd") or 0.0),
+        problems=problems,
+        command=[scrub(a) for a in command],
+        exit_code=run.exit_code,
+        usage=usage,
+        egress=egress.summary(),
+    )
+
+
 def _judge_batch(
     b: Batch,
     spec: cc.BoutSpec,
@@ -354,63 +440,27 @@ def _judge_batch(
     runner: Runner,
     runs_dir: Path,
 ) -> tuple[float, dict[str, dict[str, Any]], list[str]]:
-    rt = lt.trial.runtime
     out = runs_dir / b.batch_id
-    out.mkdir(parents=True, exist_ok=True)
-    work = work_root / b.batch_id
-    ctx_dir, cfg_dir = work / "ctx", work / "cfg"
-    ctx_dir.mkdir(parents=True)
-    cfg_dir.mkdir(parents=True)
-    if creds.mode == AuthMode.credentials_file and creds.credentials_file:
-        shutil.copy2(creds.credentials_file, cfg_dir / ".credentials.json")
-        os.chmod(cfg_dir / ".credentials.json", 0o600)
-
-    command = cc.build_command(spec, load_schema("verdicts"))
-    name = f"so-{b.batch_id}"
-    # Fake runners in tests never touch podman, so the proxy only runs for the real one.
-    egress = Egress(name, image_ref(rt), rt.network, enabled=runner is podman_runner)
-    (out / "prompt.md").write_text(b.prompt)
-    with egress:
-        create = podman_create_args(
-            name, image_ref(rt), rt.limits, creds, arena_dir, ctx_dir, cfg_dir, command,
-            extra=egress.podman_args,
-        )  # fmt: skip
-        run = runner(create, {**os.environ, **creds.env}, b.prompt, rt.limits.timeout_s)
-    lines = [scrub(line) for line in run.lines]
-    cctx = zstandard.ZstdCompressor(level=12)
-    (out / "transcript.jsonl.zst").write_bytes(cctx.compress("".join(lines).encode()))
-    (out / "stderr.log").write_text(scrub(run.stderr))
-
-    ps = cc.parse_stream(lines)
-    usage = cc.usage_summary(ps.result)
-    cost = float(usage.get("total_cost_usd") or 0.0)
-    problems = cc.isolation_problems(ps, spec)
-    tools = set((ps.init or {}).get("tools") or []) - {*TOOLS, "StructuredOutput"}
-    if tools:
-        problems.append(f"unexpected-tools: {sorted(tools)}")
+    call = run_call(
+        b.batch_id, b.prompt, load_schema("verdicts"), spec, arena_dir, work_root, lt, creds,
+        scrub, runner, out,
+    )  # fmt: skip
+    problems = call.problems
     got: dict[str, dict[str, Any]] = {}
-    if run.timed_out:
-        problems.append(f"timed out after {rt.limits.timeout_s}s")
-    elif problems:
-        pass  # isolation failed: don't trust (or cache) anything this run said
-    elif ps.result is None or usage.get("is_error"):
-        problems.append(
-            "agent error: " + ("; ".join(ps.api_errors) or str(usage.get("terminal_reason")))
-        )
-    else:
-        got, bad = parse_verdicts(cc.structured_output(ps.result), b)
+    if call.trusted:
+        got, bad = parse_verdicts(call.output, b)
         problems += bad
     record = {
         "batch_id": b.batch_id,
         "arena": b.arena,
         "judge_model": spec.model.slug,
         "refs": b.refs,
-        "command": [scrub(a) for a in command],
-        "exit_code": run.exit_code,
-        "usage": usage,
+        "command": call.command,
+        "exit_code": call.exit_code,
+        "usage": call.usage,
         "verdicts": len(got),
         "problems": problems,
-        "egress": egress.summary(),
+        "egress": call.egress,
     }
     (out / "record.json").write_text(scrub(json.dumps(record, indent=2, default=str)) + "\n")
-    return cost, got, problems
+    return call.cost, got, problems

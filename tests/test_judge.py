@@ -1,3 +1,4 @@
+import hashlib
 import json
 import re
 import subprocess
@@ -266,6 +267,42 @@ def test_dry_run_without_judge_fails(smoke_trial):
     smoke_trial.write_text(smoke_trial.read_text().replace(f"judge: {{id: {JUDGE_ID}}}\n", ""))
     r = CliRunner().invoke(app, ["judge", str(smoke_trial), "-r", "smoke", "--dry-run"])
     assert r.exit_code == 1 and "no judge model" in r.output
+
+
+# sha256 over the normalized judge.jsonl, judge_runs/ and cache files of a fake fact-mode run,
+# recorded from the fact-only judge before panel mode existed. Fact mode must not move.
+FACT_GOLDEN = "1d7476fcd4d459cb6e8de36b873a36f9c383e813b01c853b7217319e91f5cefd"
+
+
+def _judge_digest(scores: Path, cache_dir: Path) -> str:
+    def norm(obj):
+        if isinstance(obj, dict):
+            obj.pop("judged_at", None)  # the only field that changes between runs
+        return json.dumps(obj, sort_keys=True)
+
+    h = hashlib.sha256()
+    runs = sorted((scores / "judge_runs").glob("*/*"))
+    files = [scores / "judge.jsonl", *runs, *sorted(cache_dir.rglob("*.json"))]
+    for f in files:
+        if f.name == "transcript.jsonl.zst":
+            continue
+        base = cache_dir if f.is_relative_to(cache_dir) else scores
+        text = f.read_text()
+        if f.suffix == ".jsonl":
+            text = "\n".join(norm(json.loads(x)) for x in text.splitlines())
+        elif f.suffix == ".json":
+            text = norm(json.loads(text))
+        h.update(f"{f.relative_to(base)}\n{text}\n".encode())
+    return h.hexdigest()
+
+
+def test_fact_mode_output_unchanged(setup):
+    lt, lock, rows, scores = setup
+    J.run_judge(
+        lt, lock, rows, scores, CREDS, batch_size=10, runner=FakeRunner(), log=lambda m: None
+    )
+    got = _judge_digest(scores, Path(lt.trial.runtime.cache_dir) / "judge")
+    assert got == FACT_GOLDEN, got
 
 
 @pytest.mark.podman

@@ -141,6 +141,51 @@ class ModelSpec(Strict):
         return self.id + (f"@{self.effort}" if self.effort else "")
 
 
+class JudgeMode(StrEnum):
+    fact = "fact"  # one call per batch: does the code do what the finding says?
+    panel = "panel"  # several blinded voters, each trying to refute it through one lens
+
+
+# Built-in voter lenses; their prompt text lives in prompts/judge_panel.md.
+JudgeLens = Literal["reachability", "impact", "correctness"]
+DEFAULT_LENSES: list[JudgeLens] = ["reachability", "impact", "correctness"]
+# How the judge rules, as opposed to which model it is. Left out of the lock and the trial hash:
+# judging happens after the bouts and never changes what a bout did.
+JUDGE_RULING_FIELDS = frozenset({"mode", "voters", "lenses"})
+
+
+class JudgeSpec(ModelSpec):
+    mode: JudgeMode = JudgeMode.fact
+    # panel only: voters are assigned lenses in order, wrapping around when there are more
+    # voters than lenses (a second voter on a lens is an independent sample of it).
+    voters: int = Field(default=3, ge=1)
+    lenses: list[JudgeLens] = Field(default_factory=lambda: list(DEFAULT_LENSES), min_length=1)
+
+    @model_validator(mode="after")
+    def panel_shape(self) -> JudgeSpec:
+        if len(set(self.lenses)) != len(self.lenses):
+            raise ValueError(f"judge lenses repeat: {self.lenses}")
+        if self.voters < len(self.lenses):
+            raise ValueError(
+                f"judge has {len(self.lenses)} lenses but only {self.voters} voters; "
+                "every lens needs at least one voter"
+            )
+        return self
+
+    def model_only(self) -> dict[str, Any]:
+        """The ModelSpec part, as the lock and trial hash record it."""
+        return self.model_dump(mode="json", exclude=set(JUDGE_RULING_FIELDS))
+
+    def voter_slots(self) -> list[tuple[str, str]]:
+        """(slot, lens) per voter: `reachability`, ..., then `reachability-2` on wrap-around."""
+        out = []
+        for i in range(self.voters):
+            lens = self.lenses[i % len(self.lenses)]
+            k = i // len(self.lenses) + 1
+            out.append((lens if k == 1 else f"{lens}-{k}", lens))
+        return out
+
+
 # --- contenders ------------------------------------------------------------
 
 
@@ -248,7 +293,7 @@ class Trial(Strict):
     arenas: list[str]
     tasks: list[Task]
     models: list[ModelSpec]
-    judge: ModelSpec | None = None
+    judge: JudgeSpec | None = None
     reps: int = 3
     invocation: Invocation = Invocation.forced
     runtime: RuntimeConfig = RuntimeConfig()
