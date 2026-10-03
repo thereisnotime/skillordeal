@@ -293,7 +293,7 @@ def render_html(
     charts: list[ChartFile] | None = None,
     detail: Detail | None = None,
 ) -> str:
-    from skillordeal.report import _repro
+    from skillordeal.report import _repro, judge_suffix
     from skillordeal.report_detail import arena_tables, takeaways, tools_table
 
     esc = html.escape
@@ -314,7 +314,7 @@ def render_html(
             f"<code>{esc(str(img.get('digest') or 'n/a'))}</code>",
         ),
         ("models", ", ".join(f"<code>{esc(m)}</code>" for m in ctx.models) or "n/a"),
-        ("judge", f"<code>{esc(judge)}</code>" if judge else "none"),
+        ("judge", f"<code>{esc(judge)}</code>{esc(judge_suffix(rnd))}" if judge else "none"),
         ("reps, invocation", esc(f"{lk.get('reps', 'n/a')}, {lk.get('invocation', 'n/a')}")),
         ("bouts", esc(f"{ok} ok of {total}, ${spent:.2f} spent (client-side estimate)")),
         ("scores from", f"<code>scores/{esc(ctx.source)}</code>"),

@@ -29,6 +29,7 @@ from skillordeal.report import (
     bootstrap_diff,
     fmt_est,
     fmt_value,
+    judge_info,
 )
 from skillordeal.rounddata import Round, findings_from_bouts, read_jsonl, read_yaml
 
@@ -54,6 +55,8 @@ class Detail:
     findings: list[dict[str, Any]] = field(default_factory=list)
     issues: dict[str, list[Issue]] = field(default_factory=dict)  # arena -> issues
     records: dict[str, dict[str, Any]] = field(default_factory=dict)  # bout_id -> record.json
+    judge_mode: str = "fact"  # which judge wrote judge.jsonl: "fact" or "panel"
+    judge_slots: list[str] = field(default_factory=list)  # panel voters, e.g. reachability
 
     def arena_findings(self, arena: str) -> list[dict[str, Any]]:
         return [f for f in self.findings if f.get("arena") == arena]
@@ -152,6 +155,7 @@ def load_detail(trial_file: Path, rnd: Round, cells: list[Cell]) -> Detail:
                 "source": source,
                 "gt": (g or {}).get("verdict"),
                 "judge": (j or {}).get("verdict"),
+                "judge_unanimous": (j or {}).get("unanimous"),
             }
         )
     findings.sort(key=_finding_order)
@@ -174,7 +178,10 @@ def load_detail(trial_file: Path, rnd: Round, cells: list[Cell]) -> Detail:
             records[bid] = {
                 k: rec.get(k) for k in ("tool_calls", "status", "error", "invalid_reasons")
             }
-    return Detail(findings=findings, issues=issues, records=records)
+    mode, slots = judge_info(rnd)
+    return Detail(
+        findings=findings, issues=issues, records=records, judge_mode=mode, judge_slots=slots
+    )
 
 
 def _finding_order(f: dict[str, Any]) -> tuple[Any, ...]:
@@ -446,6 +453,8 @@ def takeaways(cells: list[Cell], detail: Detail | None, *, seed: int, resamples:
             f"{ok} of {total} bouts finished `ok`; the rest are left out of every mean and "
             f"chart. " + "; ".join(parts) + "."
         )
+    if detail is not None and (line := _judge_line(detail)):
+        out.append(line)
 
     by_arena: dict[str, list[Cell]] = defaultdict(list)
     for c in cells:
@@ -468,6 +477,29 @@ def takeaways(cells: list[Cell], detail: Detail | None, *, seed: int, resamples:
                 f"(+{lo:,.0f} to +{hi:,.0f} tokens), as expected when the skill loads."
             )
     return out
+
+
+def _judge_line(detail: Detail) -> str:
+    """Which judge ruled and how its verdicts split, so judge-valid is read for what it is."""
+    fs = [f for f in detail.findings if f.get("judge")]
+    if not fs:
+        return ""
+    c = Counter(str(f["judge"]) for f in fs)
+    if detail.judge_mode == "panel":
+        unanimous = sum(1 for f in fs if f.get("judge_unanimous"))
+        slots = detail.judge_slots
+        return (
+            f"Judge: panel mode, {len(slots)} blinded voters ({', '.join(slots)}) each trying to "
+            f"refute every finding, verdict by majority. Of {len(fs)} judged findings in ok "
+            f"bouts, {c['valid']} are panel-valid, {c['invalid']} panel-invalid and "
+            f"{c['unverifiable']} unverifiable; {unanimous} ({unanimous / len(fs):.0%}) had "
+            "unanimous votes."
+        )
+    return (
+        "Judge: fact mode, one ruling per finding on whether the code does what it claims "
+        f"(no threat model). Of {len(fs)} judged findings in ok bouts, {c['valid']} are "
+        f"judge-valid, {c['invalid']} invalid and {c['unverifiable']} unverifiable."
+    )
 
 
 def _arena_takeaways(
@@ -691,6 +723,36 @@ def severity_table(cells: list[Cell], detail: Detail, arena: str) -> Table | Non
     return Table("Findings per bout by severity", head, body, numeric=numeric, sort=sort)
 
 
+def judge_table(cells: list[Cell], detail: Detail, arena: str) -> Table | None:
+    """Panel verdicts per contender, with judge agreement (share of unanimous findings)."""
+    if detail.judge_mode != "panel":
+        return None
+    by: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for f in detail.arena_findings(arena):
+        if f.get("judge"):
+            by[f["contender"]].append(f)
+    names = [n for n in contenders_with_ok(cells) if by.get(n)]
+    if not names:
+        return None
+    body: list[list[TCell]] = []
+    sort: list[list[float | str | None]] = []
+    for n in names:
+        fs = by[n]
+        c = Counter(str(f["judge"]) for f in fs)
+        share = sum(1 for f in fs if f.get("judge_unanimous")) / len(fs)
+        vals = [len(fs), c["valid"], c["invalid"], c["unverifiable"]]
+        body.append([n, *(str(v) for v in vals), f"{share:.0%}"])
+        sort.append([n, *vals, share])
+    return Table(
+        "Panel judge verdicts per contender (judge agreement: share of findings with "
+        "unanimous votes)",
+        ["contender", "judged", "panel-valid", "panel-invalid", "unverifiable", "judge agreement"],
+        body,
+        numeric=(1, 2, 3, 4, 5),
+        sort=sort,
+    )
+
+
 def cwe_table(cells: list[Cell], detail: Detail, arena: str) -> Table | None:
     counts = cwe_counts(detail, arena)
     if not counts:
@@ -765,7 +827,11 @@ def arena_tables(cells: list[Cell], detail: Detail, arena: str) -> list[Table]:
             f"{single} reported by one contender only)"
         )
         out.append(coverage_table(cl, what="problem", title=title))
-    for t in (cwe_table(cells, detail, arena), severity_table(cells, detail, arena)):
+    for t in (
+        cwe_table(cells, detail, arena),
+        severity_table(cells, detail, arena),
+        judge_table(cells, detail, arena),
+    ):
         if t is not None:
             out.append(t)
     return out

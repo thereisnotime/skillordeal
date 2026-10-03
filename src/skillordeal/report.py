@@ -20,6 +20,7 @@ import json
 import math
 import subprocess
 from collections import Counter
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -39,13 +40,24 @@ class ReportError(RuntimeError):
     pass
 
 
+# Which judge wrote scores/judge.jsonl ("fact" or "panel"). Set by build_report so every label,
+# caption and takeaway of one report names the same thing.
+JUDGE_MODE: ContextVar[str] = ContextVar("judge_mode", default="fact")
+
+
 @dataclass(frozen=True)
 class Metric:
     key: str  # column in the output
-    label: str
+    base_label: str
     column: str  # source column in summary/bouts
     fmt: str  # "int", "ratio", "usd", "tokens", "sec", "mb", "num"
     scale: float = 1.0
+
+    @property
+    def label(self) -> str:
+        if self.key == "judge_valid" and JUDGE_MODE.get() == "panel":
+            return "panel-valid"
+        return self.base_label
 
 
 QUALITY = (
@@ -97,6 +109,22 @@ def load_rows(rnd: Round) -> tuple[list[dict[str, Any]], str]:
         f"no scores in {rnd.scores} (looked for summary.parquet, summary.csv, bouts.csv); "
         "run `skillordeal score` first"
     )
+
+
+def judge_info(rnd: Round) -> tuple[str, list[str]]:
+    """(mode, voter slots) of the judge behind scores/judge.jsonl; fact when there is none."""
+    from skillordeal.rounddata import read_jsonl
+
+    for r in read_jsonl(rnd.scores / "judge.jsonl"):
+        if r.get("mode") == "panel":
+            return "panel", [str(x) for x in r.get("lenses") or []]
+    return "fact", []
+
+
+def judge_suffix(rnd: Round) -> str:
+    """What the header adds after the judge model: the panel's voters, if a panel judged."""
+    mode, slots = judge_info(rnd)
+    return f", panel of {len(slots)}: {', '.join(slots)}" if mode == "panel" else ""
 
 
 def _num(v: Any) -> float:
@@ -536,7 +564,7 @@ def render_markdown(
         f"| image | `{img.get('ref', 'n/a')}` id `{str(img.get('id') or 'n/a')[:12]}` "
         f"digest `{img.get('digest') or 'n/a'}` |",
         f"| models | {', '.join(f'`{m}`' for m in ctx.models) or 'n/a'} |",
-        f"| judge | {f'`{judge}`' if judge else 'none'} |",
+        f"| judge | {f'`{judge}`{judge_suffix(rnd)}' if judge else 'none'} |",
         f"| reps, invocation | {lk.get('reps', 'n/a')}, {lk.get('invocation', 'n/a')} |",
         f"| bouts | {ok} ok of {total}; ${spent:.2f} spent (client-side estimate) |",
         f"| scores from | `scores/{ctx.source}` |",
@@ -706,6 +734,19 @@ def build_report(
     charts: bool = True,
     seed: int = DEFAULT_SEED,
     resamples: int = DEFAULT_RESAMPLES,
+) -> list[Path]:
+    token = JUDGE_MODE.set(judge_info(rnd)[0])
+    try:
+        return _build_report(
+            trial_file, rnd, markdown_only=markdown_only, charts=charts, seed=seed,
+            resamples=resamples,
+        )  # fmt: skip
+    finally:
+        JUDGE_MODE.reset(token)
+
+
+def _build_report(
+    trial_file: Path, rnd: Round, *, markdown_only: bool, charts: bool, seed: int, resamples: int
 ) -> list[Path]:
     rows, source = load_rows(rnd)
     if not rows:
