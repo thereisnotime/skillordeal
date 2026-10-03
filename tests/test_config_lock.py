@@ -86,3 +86,19 @@ def test_scoring_only_edits_keep_bout_ids(trial_dir):
         k.bout_id for k in expand(build_lock(load_trial(trial_dir / "trial.yaml"), skip_image=True))
     }
     assert changed != before
+
+
+def test_toml_prompt_contender(tmp_path):
+    from skillordeal.config import Contender
+    from skillordeal.lock import materialize
+
+    d = tmp_path / "cmd"
+    d.mkdir()
+    (d / "analyze.toml").write_text(
+        'description = "Audit things"\nprompt = """Trace taint from {source} to sink."""\n'
+    )
+    c = Contender(id="gem", kind="prompt", path=str(d))
+    facts = materialize(c, None, tmp_path / "cache", tmp_path / "ctx")
+    skill = (tmp_path / "ctx" / "plugins" / "ordeal" / "skills" / "gem" / "SKILL.md").read_text()
+    assert facts["skill_name"] == "ordeal:gem"
+    assert 'description: "Audit things"' in skill and "Trace taint from {source}" in skill

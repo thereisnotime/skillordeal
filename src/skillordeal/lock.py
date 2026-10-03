@@ -16,6 +16,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -128,12 +129,21 @@ def materialize(c: Contender, sha: str | None, cache_dir: Path, dest: Path) -> d
             (sdir_root / "skills").mkdir()
             shutil.move(str(raw), sdir_root / "skills" / name)
         else:  # prompt
-            files = list(raw.rglob("*.md"))
+            files = list(raw.rglob("*.md")) + list(raw.rglob("*.toml"))
             if len(files) != 1:
-                raise LockError(f"contender {c.id}: prompt kind needs exactly one .md file")
-            body = files[0].read_text()
-            fm = _frontmatter(body)
-            body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", body, count=1, flags=re.S)
+                raise LockError(
+                    f"contender {c.id}: prompt kind needs exactly one .md or .toml file"
+                )
+            if files[0].suffix == ".toml":
+                # Gemini CLI style command: `description` + `prompt` keys.
+                cmd = tomllib.loads(files[0].read_text())
+                if not isinstance(cmd.get("prompt"), str):
+                    raise LockError(f"contender {c.id}: {files[0].name} has no string `prompt`")
+                fm, body = {"description": cmd.get("description")}, cmd["prompt"]
+            else:
+                body = files[0].read_text()
+                fm = _frontmatter(body)
+                body = re.sub(r"^---\s*\n.*?\n---\s*\n", "", body, count=1, flags=re.S)
             name = c.skill_name or c.id
             desc = fm.get("description") or f"Wrapped prompt from {c.repo or c.path}:{c.subpath}"
             sdir = sdir_root / "skills" / name
